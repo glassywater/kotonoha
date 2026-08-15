@@ -90,6 +90,8 @@ Open **Settings** from the tray. Under **Sources**, providers can be reordered o
 
 Settings also controls fonts, colors, opacity, position, translation, icons, panel style, and lyric effects.
 
+**Furigana** (hiragana readings above Japanese kanji) is an opt-in display feature backed by the optional `furigana` extra (`fugashi` + `unidic-lite`). When you enable it and the analyzer isn't installed (for example an installed package that doesn't bundle the extra), lyrics simply don't show readings and the Settings screen prints an install hint. Install it with `pip install fugashi unidic-lite` (or `uv sync --extra furigana`).
+
 ## Cider plugin (optional)
 
 The Cider integration is experimental and depends on Cider's internal APIs and Apple Music's TTML endpoint. Keep an external lyric source enabled as a fallback.

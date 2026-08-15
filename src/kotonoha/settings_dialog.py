@@ -672,6 +672,11 @@ class SettingsDialog(QDialog):
         self._furigana = QCheckBox(t("set.furigana"))
         self._furigana.setChecked(c.furigana)
         form.addRow(self._furigana)
+        # If the optional fugashi analyzer isn't installed, hint how to enable readings.
+        from .lyrics import furigana as _furigana_mod
+
+        if not _furigana_mod._furigana_enabled():
+            form.addRow(self._hint(t("set.furigana_hint")))
         return page
 
     def _panel_tab(self) -> QWidget:

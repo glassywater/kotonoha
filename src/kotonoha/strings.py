@@ -77,6 +77,16 @@ STRINGS: dict[str, dict[str, str]] = {
                      "zh-Hans": "日文汉字注音（汉字上方平假名）",
                      "zh-Hant": "日文漢字注音（漢字上方平假名）",
                      "ja": "ルビを表示（漢字の上にひらがな）"},
+    "set.furigana_hint": {"en": "Requires the optional 'furigana' analyzer (fugashi + unidic-lite). "
+                                 "If lyrics don't show readings, install it with: "
+                                 "pip install fugashi unidic-lite  (or 'uv sync --extra furigana').",
+                          "zh-Hans": "需要可选的注音分析器（fugashi + unidic-lite）。若歌词未显示读音，请安装："
+                                     "pip install fugashi unidic-lite（或 uv sync --extra furigana）。",
+                          "zh-Hant": "需要可選的注音分析器（fugashi + unidic-lite）。若歌詞未顯示讀音，請安裝："
+                                     "pip install fugashi unidic-lite（或 uv sync --extra furigana）。",
+                          "ja": "オプションの注音（ふりがな）分析器（fugashi + unidic-lite）が必要です。"
+                                 "読みが表示されない場合は 次 をインストール: "
+                                 "pip install fugashi unidic-lite（または uv sync --extra furigana）。"},
     "set.opacity": {"en": "Panel opacity", "zh-Hans": "面板不透明度",
                     "zh-Hant": "面板不透明度", "ja": "パネル不透明度"},
     "set.panel_style": {"en": "Panel style", "zh-Hans": "面板样式", "zh-Hant": "面板樣式", "ja": "パネルの種類"},
