@@ -449,6 +449,10 @@ class KaraokeLabel(QWidget):
             w_kana = float(self._fm_ruby.horizontalAdvance(kana))
             center = x0 + w_base / 2.0
             kana_x = center - w_kana / 2.0
+            # A long reading on a single kanji (e.g. 抱 -> だきしめ) can be wider than
+            # the base kanji, so clamp the ruby inside the label to keep it fully
+            # visible instead of being clipped at an edge (both line-start and -end).
+            kana_x = max(0.0, min(kana_x, max(0.0, float(self.width()) - w_kana)))
             # Ruby sits in the headroom reserved by _furigana_top (widget's top area);
             # the widget height already accounts for it via sizeHint, so y is near the
             # top, safely inside the widget and centred under the kanji above.
