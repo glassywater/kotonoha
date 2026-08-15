@@ -56,13 +56,22 @@ def test_analyze_extracts_kanji_readings_with_positions():
     )
 
 
-def test_analyze_skips_mixed_sent_kanji_in_okurigana():
-    # 見上げ -> 漢字段 "見上" + 送假名 "げ";kana 转平假名后标注在汉字组合上
+def test_analyze_strips_okurigana_from_kanji_reading():
+    # 見上げ -> 漢字段"見上"(注音みあ) + 送假名"げ"(已写在歌词,不注音)。
     _patched_analyze([("見上げ", "ミアゲ")])
     res = furigana.analyze("見上げ")
     assert len(res) == 1
     assert res[0].base == "見上"
-    assert res[0].kana == "みあげ"
+    assert res[0].kana == "みあ"  # not "みあげ": the 送假名 げ is already in the lyric
+
+
+def test_analyze_strips_okurigana_full_line():
+    # 抱きしめてて沈めば -> 抱=だ(きしめ是送假名),沈=しず(めば->しずめば,送假名めば被剥离)
+    _patched_analyze([("抱きしめ", "ダキシメ"), ("てて", "テテ"), ("沈めば", "シズメバ")])
+    res = furigana.analyze("抱きしめてて沈めば")
+    pairs = {f.base: f.kana for f in res}
+    assert pairs.get("抱") == "だ"  # not だきしめ
+    assert pairs.get("沈") == "しず"
 
 
 def test_analyze_skips_pure_kana_and_latin():

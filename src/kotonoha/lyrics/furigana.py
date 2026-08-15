@@ -59,6 +59,29 @@ def _split_kana_kanji(orth: str) -> list[tuple[str, bool]]:
     return out
 
 
+def _kanji_reading(surface: str, word_kana: str) -> str:
+    """返回应标注在汉字(surface 的汉字段)上的注音。
+
+    送假名词(如 抱きしめ)里，「きしめ」已用假名写在歌词中，读音 = 表记，不应再注音；
+    只有汉字段「抱」需要注音，且对应整词读音去掉送假名读音的部分「だ」。
+    非送假名词(如 名前)则整个读音都标在汉字上。
+    """
+    segs = _split_kana_kanji(surface)
+    kanji = "".join(t for t, k in segs if k)
+    if not kanji:
+        return ""
+    okuri = "".join(t for t, k in segs if not k)
+    if okuri:
+        # 送假名读音通常 = 表记本身(转平假名)。若整词读音以送假名读音结尾,
+        # 则汉字注音 = 整词读音去掉这段送假名部分。
+        okuri_hira = _kata_to_hira(okuri)
+        if okuri_hira and word_kana.endswith(okuri_hira):
+            kan_kana = word_kana[: -len(okuri_hira)]
+            if kan_kana:
+                return _kata_to_hira(kan_kana)
+    return _kata_to_hira(word_kana)
+
+
 # 惰性单例；模块首次调用 analyze 时初始化一次
 _tagger = None
 _tagger_error: BaseException | None = None
@@ -98,12 +121,13 @@ def analyze(text: str) -> tuple[Furigana, ...]:
         out: list[Furigana] = []
         search_from = 0
         for word in tagger(text):
-            segs = _split_kana_kanji(word.surface)
+            surface = word.surface
+            segs = _split_kana_kanji(surface)
             base = "".join(seg for seg, kan in segs if kan)
             if not base:
                 continue
-            # 读音取该词的 kana，转平假名
-            kana = _kata_to_hira(word.feature.kana)
+            word_kana = _kata_to_hira(word.feature.kana)
+            kana = _kanji_reading(surface, word_kana)
             if not kana:
                 continue
             pos = text.find(base, search_from)
