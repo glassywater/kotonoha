@@ -134,10 +134,28 @@ def test_mecab_token_parser():
 
 
 def test_unidic_env_var_overrides_candidates(monkeypatch, tmp_path):
+    # 只有存在关键文件(sys.dic/matrix.bin)的目录才算有效词典。
+    fake = tmp_path / "dicdir"
+    fake.mkdir()
+    (fake / "sys.dic").write_bytes(b"")  # 关键文件占位，让 is_unidic_dicdir 通过
+    (fake / "matrix.bin").write_bytes(b"")
+    monkeypatch.setenv("KOTONOHA_UNIDIC_DIR", str(fake))
+    assert furigana.referenced_dicdir() == fake
+    # 空目录应被判定为无效(不是词典)。
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.setenv("KOTONOHA_UNIDIC_DIR", str(empty))
+    assert not furigana.is_unidic_dicdir(empty)
+
+
+def test_download_skips_when_dict_already_present(tmp_path):
+    # 目标位置已是有效词典 -> download_unidic 直接返回，不碰网络。
     dicdir = tmp_path / "dicdir"
-    dicdir.mkdir()
-    monkeypatch.setenv("KOTONOHA_UNIDIC_DIR", str(dicdir))
-    assert furigana._unidic_dicdir() == dicdir
+    dicdir.mkdir(parents=True, exist_ok=True)
+    (dicdir / "sys.dic").write_bytes(b"x")
+    (dicdir / "matrix.bin").write_bytes(b"x")
+    result = furigana.download_unidic(tmp_path)
+    assert result == dicdir
 
 
 # --- KaraokeLabel integration ---

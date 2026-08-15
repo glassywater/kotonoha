@@ -77,19 +77,22 @@ STRINGS: dict[str, dict[str, str]] = {
                      "zh-Hans": "日文汉字注音（汉字上方平假名）",
                      "zh-Hant": "日文漢字注音（漢字上方平假名）",
                      "ja": "ルビを表示（漢字の上にひらがな）"},
-    "set.furigana_hint": {"en": "Readings need a Japanese analyzer and dictionary. "
-                                 "Preferred: install the system `mecab` package (and put a UniDic dictionary "
-                                 "under ~/.local/share/kotonoha/unidic/, or set KOTONOHA_UNIDIC_DIR). "
-                                 "Alternative: pip install fugashi unidic-lite.",
-                          "zh-Hans": "需要日文分析器与词典才能显示注音。推荐安装系统 mecab 包（并把 UniDic 词典放到 "
-                                     "~/.local/share/kotonoha/unidic/，或设置 KOTONOHA_UNIDIC_DIR 变量）。"
-                                     "备选：pip install fugashi unidic-lite。",
-                          "zh-Hant": "需要日文分析器與詞典才能顯示注音。推薦安裝系統 mecab 套件（並把 UniDic 詞典放到 "
-                                     "~/.local/share/kotonoha/unidic/，或設定 KOTONOHA_UNIDIC_DIR 變數）。"
-                                     "備選：pip install fugashi unidic-lite。",
-                          "ja": "読みには日本語解析器と辞書が必要です。推奨: システムの mecab パッケージを"
-                                 "インストールし、辞書を ~/.local/share/kotonoha/unidic/ に置く"
-                                 "（または KOTONOHA_UNIDIC_DIR を設定）。代替: pip install fugashi unidic-lite。"},
+    "set.furigana_dict": {"en": "UniDic dictionary", "zh-Hans": "UniDic 词典",
+                          "zh-Hant": "UniDic 詞典", "ja": "UniDic 辞書"},
+    "set.furigana_download": {"en": "Download", "zh-Hans": "下载", "zh-Hant": "下載", "ja": "ダウンロード"},
+    "set.furigana_downloading": {"en": "Downloading…", "zh-Hans": "下载中…",
+                                 "zh-Hant": "下載中…", "ja": "ダウンロード中…"},
+    "set.furigana_download_failed": {"en": "Dictionary download failed", "zh-Hans": "词典下载失败",
+                                     "zh-Hant": "詞典下載失敗", "ja": "辞書のダウンロードに失敗"},
+    "set.furigana_download_hint": {"en": "Download the UniDic dictionary into the path above"
+                                          " (needed for mecab-based furigana).",
+                                   "zh-Hans": "将 UniDic 词典下载到上方路径（meCab 注音需要）。",
+                                   "zh-Hant": "將 UniDic 詞典下載到上方路徑（meCab 注音需要）。",
+                                   "ja": "UniDic 辞書を上のパスへダウンロードします（meCab 注音に必要）。"},
+    "set.furigana_browse_hint": {"en": "Choose a dictionary directory", "zh-Hans": "选择词典目录",
+                                 "zh-Hant": "選擇詞典目錄", "ja": "辞書ディレクトリを選択"},
+    "set.furigana_browse_title": {"en": "Select UniDic dictionary directory", "zh-Hans": "选择 UniDic 词典目录",
+                                  "zh-Hant": "選擇 UniDic 詞典目錄", "ja": "UniDic 辞書ディレクトリを選択"},
     "set.opacity": {"en": "Panel opacity", "zh-Hans": "面板不透明度",
                     "zh-Hant": "面板不透明度", "ja": "パネル不透明度"},
     "set.panel_style": {"en": "Panel style", "zh-Hans": "面板样式", "zh-Hant": "面板樣式", "ja": "パネルの種類"},

@@ -9,6 +9,7 @@ from :mod:`kotonoha.strings`.
 from __future__ import annotations
 
 import os
+import threading
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -45,10 +46,12 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFontComboBox,
     QFormLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListView,
     QListWidget,
     QListWidgetItem,
@@ -339,6 +342,9 @@ class SettingsDialog(QDialog):
     applied = pyqtSignal(object)  # emits Config
     clear_cache_requested = pyqtSignal()
     restart_requested = pyqtSignal()
+    # Furigana dictionary download progress/result (emitted from a worker thread).
+    furigana_progress = pyqtSignal(str)
+    furigana_done = pyqtSignal(bool)  # True = downloaded ok, False = failed
 
     def __init__(self, config: Config, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -672,12 +678,108 @@ class SettingsDialog(QDialog):
         self._furigana = QCheckBox(t("set.furigana"))
         self._furigana.setChecked(c.furigana)
         form.addRow(self._furigana)
-        # If the optional fugashi analyzer isn't installed, hint how to enable readings.
+        form.addRow(t("set.furigana_dict"), self._build_furigana_dict_row())
+        return page
+
+    # --- furigana UniDic dictionary management ---
+
+    def _default_dict_path(self) -> Path:
         from .lyrics import furigana as _furigana_mod
 
-        if not _furigana_mod._furigana_enabled():
-            form.addRow(self._hint(t("set.furigana_hint")))
-        return page
+        ref = _furigana_mod.referenced_dicdir()
+        return ref if ref else _furigana_mod._UNIDIC_CANDIDATES[0]
+
+    def _build_furigana_dict_row(self) -> QWidget:
+        """Row: [download] [status ✓/✗] [path entry] [browse] for the UniDic dict."""
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
+
+        self._furigana_download = QPushButton(t("set.furigana_download"))
+        self._furigana_download.setToolTip(t("set.furigana_download_hint"))
+        lay.addWidget(self._furigana_download)
+
+        self._furigana_status = QLabel("✓")
+        self._furigana_status.setFixedWidth(18)
+        self._furigana_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(self._furigana_status)
+
+        self._furigana_path = QLineEdit(str(self._default_dict_path()))
+        self._furigana_path.setReadOnly(False)
+        lay.addWidget(self._furigana_path, 1)
+
+        self._furigana_browse = QPushButton("…")
+        self._furigana_browse.setToolTip(t("set.furigana_browse_hint"))
+        lay.addWidget(self._furigana_browse)
+
+        self._refresh_furigana_status()
+        self._furigana_path.textChanged.connect(self._refresh_furigana_status)
+        self._furigana_download.clicked.connect(self._start_furigana_download)
+        self._furigana_browse.clicked.connect(self._browse_furigana_path)
+        self.furigana_progress.connect(self._on_furigana_progress)
+        self.furigana_done.connect(self._on_furigana_done)
+        return row
+
+    def _refresh_furigana_status(self) -> None:
+        from .lyrics import furigana as _furigana_mod
+
+        path = Path(self._furigana_path.text().strip())
+        ok = _furigana_mod.is_unidic_dicdir(path)
+        self._furigana_status.setText("✓" if ok else "✗")
+        self._furigana_status.setStyleSheet(
+            f"color: {'#3fca5b' if ok else '#e5484d'}; font-weight: bold; font-size: 14px;"
+        )
+        # Download is enabled whenever the current path is not a valid dictionary
+        # (independent of the display toggle), disabled once it is referenced.
+        self._furigana_download.setEnabled(not ok)
+
+    def _browse_furigana_path(self) -> None:
+        start = self._furigana_path.text().strip() or str(Path.home())
+        chosen = QFileDialog.getExistingDirectory(self, t("set.furigana_browse_title"), start)
+        if chosen:
+            self._furigana_path.setText(chosen)
+
+    def _start_furigana_download(self) -> None:
+        from .lyrics import furigana as _furigana_mod
+
+        dest = Path(self._furigana_path.text().strip())
+        self._furigana_download.setEnabled(False)
+        self._furigana_download.setText(t("set.furigana_downloading"))
+        self._refresh_furigana_status()
+
+        def writer(target: Path) -> Path:
+            return _furigana_mod.download_unidic(target)
+
+        thread = threading.Thread(target=self._run_download, args=(dest, writer), daemon=True)
+        thread.start()
+
+    def _run_download(self, dest: Path, fn) -> None:
+        try:
+            fn(dest)
+            self.furigana_done.emit(True)
+        except Exception as exc:  # noqa: BLE001 - surface any download failure
+            from .lyrics import furigana as _furigana_mod
+
+            _furigana_mod._furigana_last_error = exc
+            self.furigana_done.emit(False)
+
+    def _on_furigana_progress(self, text: str) -> None:
+        self._furigana_download.setText(text)
+
+    def _on_furigana_done(self, ok: bool) -> None:
+        from .lyrics import furigana as _furigana_mod
+
+        self._furigana_download.setText(t("set.furigana_download"))
+        prop = getattr(_furigana_mod, "_furigana_last_error", None)
+        self._refresh_furigana_status()
+        if not ok:
+            # brief status feedback via the status label color (leave ✗)
+            self._furigana_download.setToolTip(
+                str(prop) if prop else t("set.furigana_download_failed")
+            )
+        else:
+            self._furigana_download.setToolTip(t("set.furigana_download_hint"))
 
     def _panel_tab(self) -> QWidget:
         c = self._config

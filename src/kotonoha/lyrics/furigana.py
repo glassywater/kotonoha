@@ -19,9 +19,14 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
+import tarfile
+import tempfile
+import urllib.error
+import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
@@ -123,13 +128,87 @@ def _kanji_reading(surface: str, word_kana: str) -> str:
 
 def _unidic_dicdir() -> Path | None:
     """找一个可用的 UniDic dicdir（用户放置或系统安装）。找不到返回 None。"""
+    return referenced_dicdir()
+
+
+def is_unidic_dicdir(path: Path) -> bool:
+    """判断 ``path`` 是否为一个可用的 UniDic 词典目录（含 mecab 所需的 dicrc/bin）。"""
+    if not path:
+        return False
+    p = Path(path)
+    # UniDic dicdir 的关键文件（sys.dic / matrix.bin 是最主要的）。
+    return p.is_dir() and (p / "sys.dic").is_file() and (p / "matrix.bin").is_file()
+
+
+def referenced_dicdir() -> Path | None:
+    """返回当前实际引用到的 UniDic 词典目录（环境变量优先，其次候选路径）。"""
     env = os.environ.get("KOTONOHA_UNIDIC_DIR")
-    if env and Path(env).is_dir():
+    if env and is_unidic_dicdir(Path(env)):
         return Path(env)
-    for p in _UNIDIC_CANDIDATES:
-        if p.is_dir():
-            return p
+    for c in _UNIDIC_CANDIDATES:
+        if is_unidic_dicdir(c):
+            return c
     return None
+
+
+# unidic-lite 的 PyPI 项目名与安装后 dicdir 所在的包内相对路径。
+_UNIDIC_LITE_VERSION = "1.0.8"
+_UNIDIC_LITE_PKG = "unidic-lite"
+_UNIDIC_LITE_INNER = "unidic_lite/dicdir"  # 安装包里字典数据的相对路径
+
+
+def _unidic_lite_pypi_url() -> str:
+    """向 PyPI JSON API 取 unidic-lite sdist 的下载 URL。"""
+    url = f"https://pypi.org/pypi/{_UNIDIC_LITE_PKG}/{_UNIDIC_LITE_VERSION}/json"
+    with urllib.request.urlopen(url, timeout=30) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    for f in data.get("urls", []):
+        if f.get("filename", "").endswith(".tar.gz"):
+            return f["url"]
+    raise RuntimeError("unidic-lite sdist not found on PyPI")
+
+
+def download_unidic(dest: Path | None = None, progress: Callable[[str], None] | None = None) -> Path:
+    """下载并解压 unidic-lite 词典到 ``dest``（默认候选路径），返回 dicdir 路径。
+
+    阻塞式（应在后台线程调用）；``progress`` 可选地收到阶段文本。下载失败抛异常。
+    """
+    target = Path(dest) if dest else _UNIDIC_CANDIDATES[0]
+    dicdir = target if target.name == "dicdir" else target / "dicdir"
+    if is_unidic_dicdir(dicdir):
+        return dicdir
+    if progress:
+        progress("正在获取词典下载地址…")
+    sdist_url = _unidic_lite_pypi_url()
+    dicdir.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="kotonoha-unidic-") as tmp:
+        if progress:
+            progress("正在下载 UniDic 词典…")
+        fname = os.path.basename(sdist_url) or "unidic-lite.tar.gz"
+        tmp_tarball = os.path.join(tmp, fname)
+        try:
+            urllib.request.urlretrieve(sdist_url, tmp_tarball)  # noqa: S310 - fixed PyPI URL
+        except (urllib.error.URLError, OSError) as exc:
+            raise RuntimeError(f"下载词典失败: {exc}") from exc
+        if progress:
+            progress("正在解压词典…")
+        # 解压整个 sdist，再在树里定位 unidic_lite/dicdir。
+        with tarfile.open(tmp_tarball, "r:gz") as tar:
+            tar.extractall(tmp, filter="data")
+        found = None
+        for root, dirs, _files in os.walk(tmp):
+            if "dicdir" in dirs and (Path(root) / "dicdir" / "sys.dic").is_file():
+                found = Path(root) / "dicdir"
+                break
+        if found is None:
+            raise RuntimeError("词典目录未解压出来")
+        if dicdir.exists():
+            shutil.rmtree(dicdir)
+        found.replace(dicdir)
+    if progress:
+        progress("词典就绪。")
+    return dicdir
+
 
 
 def _parse_mecab_output(stdout: str) -> list[_Token]:
@@ -184,6 +263,8 @@ _BackendFn = Callable[[str], list[_Token]]
 _backend_state = 0
 _backend: _BackendFn | None = None
 _backend_error: BaseException | None = None
+# 最近一次词典下载/探测的错误（供 UI 显示）。
+_furigana_last_error: BaseException | None = None
 
 
 def _select_backend():
