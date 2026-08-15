@@ -69,7 +69,7 @@ def test_fontconfig_prefer_rules_prefix_builtin_fallback(qapp):
     should lead the built-in CJK safety net, so a user <alias>/<prefer> rule
     (e.g. "CaskaydiaCove Nerd Font Mono" -> "霞鹜文楷 TC") is honoured instead of
     being shadowed by the hardcoded list."""
-    from kotonoha.overlay import _fontconfig_fallback_families, _FALLBACK_FAMILIES
+    from kotonoha.overlay import _FALLBACK_FAMILIES, _fontconfig_fallback_families
 
     _fontconfig_fallback_families.cache_clear()
     # Simulate fc-match -s: the chosen family first, then the user's preferred

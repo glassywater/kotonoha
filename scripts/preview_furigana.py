@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 import fugashi
 from PyQt6.QtCore import QRectF, Qt
