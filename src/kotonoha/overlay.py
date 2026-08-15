@@ -11,17 +11,28 @@ from __future__ import annotations
 
 import logging
 import subprocess
+from collections.abc import Callable
 from dataclasses import replace
 from functools import lru_cache
 
 from PyQt6 import sip
 from PyQt6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QGuiApplication, QMouseEvent, QPainter, QPaintEvent, QShowEvent
+from PyQt6.QtGui import (
+    QAction,
+    QColor,
+    QFont,
+    QGuiApplication,
+    QMouseEvent,
+    QPainter,
+    QPaintEvent,
+    QShowEvent,
+)
 from PyQt6.QtWidgets import (
     QApplication,
     QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -127,10 +138,20 @@ class LyricsOverlay(QWidget):
     # virtual-desktop origins are deliberately excluded.
     position_changed = pyqtSignal(int, int, str)
 
-    def __init__(self, state: LyricsState, config: Config, controller: LayerShellController | None = None) -> None:
+    def __init__(
+        self,
+        state: LyricsState,
+        config: Config,
+        controller: LayerShellController | None = None,
+        *,
+        request_players: Callable[[Callable[[list[tuple[str, str]]], None]], None] | None = None,
+        select_player: Callable[[str | None], None] | None = None,
+    ) -> None:
         super().__init__()
         self._state = state
         self._config = config
+        self._request_players = request_players
+        self._select_player = select_player
         self._clock = MediaClock()
         self._passthrough = config.passthrough
         self._layer_pos = QPoint()  # screen-local top-left of the surface
@@ -218,6 +239,20 @@ class LyricsOverlay(QWidget):
         bar.setSpacing(6)
         bar.addStretch(1)
 
+        # Live MPRIS player selector (ported from waylyrics): a button that pops a
+        # submenu listing every reachable player, refreshed on open.
+        self._player_btn = QToolButton(self._container)
+        self._player_btn.setFixedSize(22, 22)
+        self._player_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._player_btn.setStyleSheet(CONTROL_BUTTON_STYLE)
+        self._player_btn.setText("♪")
+        self._player_btn.setToolTip(t("overlay.select_player"))
+        self._player_menu = QMenu(self._player_btn)
+        self._player_menu.aboutToShow.connect(self._refresh_player_menu)
+        self._player_btn.setMenu(self._player_menu)
+        self._player_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        bar.addWidget(self._player_btn)
+
         self._lock_btn = QToolButton(self._container)
         self._lock_btn.setFixedSize(22, 22)
         self._lock_btn.setIconSize(QSize(15, 15))
@@ -247,6 +282,24 @@ class LyricsOverlay(QWidget):
     def _update_lock_icon(self) -> None:
         self._lock_btn.setIcon(lock_icon(self._passthrough, self._control_icon_color()))
         self._lock_btn.setToolTip(t("overlay.locked") if self._passthrough else t("overlay.unlocked"))
+
+    def _refresh_player_menu(self) -> None:
+        """Rebuild the player submenu with the current MPRIS players (async)."""
+        self._player_menu.clear()
+        auto = QAction(t("tray.player_auto"), self._player_menu)
+        auto.triggered.connect(lambda: self._select_player(None) if self._select_player else None)
+        self._player_menu.addAction(auto)
+        self._player_menu.addSeparator()
+        if self._request_players is not None:
+            self._request_players(self._populate_player_menu)
+
+    def _populate_player_menu(self, players: list[tuple[str, str]]) -> None:
+        for bus_name, identity in players:
+            action = QAction(identity, self._player_menu)
+            action.triggered.connect(
+                lambda _=False, name=bus_name: self._select_player(name) if self._select_player else None
+            )
+            self._player_menu.addAction(action)
 
     def _update_chrome(self) -> None:
         """Locking only hides the interactive controls (you can't click them once

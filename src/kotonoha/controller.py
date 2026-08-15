@@ -10,6 +10,7 @@ import asyncio
 import logging
 import sqlite3
 import sys
+from collections.abc import Callable
 
 from PyQt6.QtCore import QProcess
 from PyQt6.QtWidgets import QApplication
@@ -47,7 +48,12 @@ class AppController:
         self._app.setWindowIcon(load_icon(config.window_icon_name, accent=config.accent_start))
 
         self._state = LyricsState()
-        self._overlay = LyricsOverlay(self._state, config)
+        self._overlay = LyricsOverlay(
+            self._state,
+            config,
+            request_players=self.request_players,
+            select_player=self.select_player,
+        )
         self._gate = SourceGate()
         self._receiver = LyricsReceiver(
             self._state,
@@ -68,6 +74,8 @@ class AppController:
             on_toggle_passthrough=self._on_toggle_passthrough,
             on_open_settings=self._open_settings,
             on_quit=self._app.quit,
+            request_players=self.request_players,
+            select_player=self.select_player,
         )
 
         self._overlay.passthrough_toggle_requested.connect(self._toggle_passthrough)
@@ -183,6 +191,28 @@ class AppController:
             save_config(self._config)
         except OSError as exc:
             logger.warning("Could not save config: %s", exc)
+
+    # --- live player selection (ported from waylyrics) ---
+
+    def select_player(self, name: str | None) -> None:
+        """Pin playback to a given MPRIS player bus name (None = auto)."""
+        self._mpris.select_player(name)
+
+    def request_players(self, on_result: Callable[[list[tuple[str, str]]], None]) -> None:
+        """Asynchronously fetch (bus_name, Identity) players and call ``on_result``.
+
+        Results are delivered on the Qt/asyncio event loop via a task callback.
+        """
+        task = asyncio.create_task(self._mpris.list_available_players())
+
+        def finished(done: asyncio.Task[list[tuple[str, str]]]) -> None:
+            try:
+                players = done.result()
+            except Exception:  # noqa: BLE001 - best-effort listing
+                players = []
+            on_result(players)
+
+        task.add_done_callback(finished)
 
     # --- accessors for tests ---
 

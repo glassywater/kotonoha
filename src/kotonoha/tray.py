@@ -123,6 +123,9 @@ class KotonohaTray(QSystemTrayIcon):
         on_toggle_passthrough: Callable[[bool], None],
         on_open_settings: Callable[[], None],
         on_quit: Callable[[], None],
+        request_players: Callable[[Callable[[list[tuple[str, str]]], None]], None]
+        | None = None,
+        select_player: Callable[[str | None], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self._on_toggle_passthrough = on_toggle_passthrough
@@ -130,6 +133,15 @@ class KotonohaTray(QSystemTrayIcon):
         self.setToolTip(t("tray.tooltip"))
 
         menu = QMenu()
+
+        # Live player selector (ported from waylyrics): a submenu listing every
+        # reachable MPRIS player, refreshed each time it opens.
+        self._request_players = request_players
+        self._select_player = select_player
+        self._players_menu = QMenu(t("tray.select_player"), menu)
+        self._players_menu.aboutToShow.connect(self._refresh_players_menu)
+        menu.addMenu(self._players_menu)
+        menu.addSeparator()
 
         self._lock_action = QAction(t("tray.lock"), menu)
         self._lock_action.setCheckable(True)
@@ -161,3 +173,25 @@ class KotonohaTray(QSystemTrayIcon):
 
     def set_icon_name(self, icon_name: str, accent: str = "#FF4FA3") -> None:
         self.setIcon(load_icon(icon_name, accent=accent))
+
+    # --- live player selection ---
+
+    def _refresh_players_menu(self) -> None:
+        """Ask the controller for the current MPRIS players and rebuild the submenu."""
+        self._players_menu.clear()
+        auto = QAction(t("tray.player_auto"), self._players_menu)
+        auto.triggered.connect(lambda: self._select_player(None) if self._select_player else None)
+        self._players_menu.addAction(auto)
+        self._players_menu.addSeparator()
+        if self._request_players is not None:
+            self._request_players(self._populate_players)
+
+    def _populate_players(self, players: list[tuple[str, str]]) -> None:
+        for bus_name, identity in players:
+            action = QAction(identity, self._players_menu)
+            # keep the submenu alive until shown; give it a parent menu
+            action.setParent(self._players_menu)
+            action.triggered.connect(
+                lambda _=False, name=bus_name: self._select_player(name) if self._select_player else None
+            )
+            self._players_menu.addAction(action)

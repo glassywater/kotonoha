@@ -31,6 +31,8 @@ STRINGS: dict[str, dict[str, str]] = {
                   "zh-Hant": "鎖定 / 滑鼠穿透", "ja": "ロック / クリック透過"},
     "tray.settings": {"en": "Settings…", "zh-Hans": "设置…", "zh-Hant": "設定…", "ja": "設定…"},
     "tray.quit": {"en": "Quit", "zh-Hans": "退出", "zh-Hant": "結束", "ja": "終了"},
+    "tray.select_player": {"en": "Player", "zh-Hans": "播放器", "zh-Hant": "播放器", "ja": "プレイヤー"},
+    "tray.player_auto": {"en": "Auto", "zh-Hans": "自动", "zh-Hant": "自動", "ja": "自動"},
 
     "overlay.locked": {"en": "Locked (click-through) — click to unlock & drag",
                        "zh-Hans": "已锁定（鼠标穿透）— 点击解锁可拖动",
@@ -41,6 +43,8 @@ STRINGS: dict[str, dict[str, str]] = {
                          "zh-Hant": "已解鎖（可拖動）— 點擊鎖定並穿透",
                          "ja": "解除中（移動可）— クリックでロックして透過"},
     "overlay.settings": {"en": "Settings", "zh-Hans": "设置", "zh-Hant": "設定", "ja": "設定"},
+    "overlay.select_player": {"en": "Select player", "zh-Hans": "选择播放器", "zh-Hant": "選擇播放器",
+                              "ja": "プレイヤーを選択"},
     "overlay.idle": {"en": "♪ Waiting for music…", "zh-Hans": "♪ 等待音乐…",
                      "zh-Hant": "♪ 等待音樂…", "ja": "♪ 音楽を待っています…"},
 

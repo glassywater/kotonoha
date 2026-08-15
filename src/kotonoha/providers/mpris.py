@@ -64,6 +64,9 @@ MPRIS_INTROSPECTION = """<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object
       <arg name="Position" type="x"/>
     </signal>
   </interface>
+  <interface name="org.mpris.MediaPlayer2">
+    <property name="Identity" type="s" access="read"/>
+  </interface>
 </node>"""
 
 
@@ -178,6 +181,44 @@ class MprisProvider:
         self._fuzzy = updated
         self._resolver.set_fuzzy(updated)
         self._force_reload()
+
+    # --- player selection (ported from waylyrics: live pick the active MPRIS player) ---
+
+    def current_player(self) -> str | None:
+        """The bus name currently preferred/selected (None = auto)."""
+        return self._current_name
+
+    def select_player(self, name: str | None) -> None:
+        """Pin playback to a specific MPRIS player (bus name) or None for auto.
+
+        The selection survives while that player is present/playing; if it
+        disappears, ``_active_player`` falls back to automatic choice.
+        """
+        self._current_name = name or None
+        self._force_reload()
+
+    async def list_available_players(self) -> list[tuple[str, str]]:
+        """List (bus_name, Identity) for every reachable MPRIS player (sorted)."""
+        if self._bus is None:
+            return []
+        out: list[tuple[str, str]] = []
+        for name in await list_players(self._bus):
+            identity = await self._safe_identity(name)
+            out.append((name, identity or name))
+        return out
+
+    async def _safe_identity(self, name: str) -> str | None:
+        try:
+            obj = self._bus.get_proxy_object(name, MPRIS_PATH, MPRIS_INTROSPECTION)
+            props = obj.get_interface("org.freedesktop.DBus.Properties")
+            value = await props.call_get("org.mpris.MediaPlayer2", "Identity")
+        except Exception as exc:  # noqa: BLE001 - D-Bus boundary
+            logger.debug("identity read failed for %s: %s", name, exc)
+            return None
+        # call_get returns a Variant; unwrap it.
+        if hasattr(value, "value"):
+            value = value.value
+        return value if isinstance(value, str) else None
 
     async def clear_cache(self) -> None:
         await self._resolver.clear_cache()
