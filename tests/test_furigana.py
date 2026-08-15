@@ -56,6 +56,15 @@ def test_analyze_extracts_kanji_readings_with_positions():
     )
 
 
+def test_analyze_applies_common_reading_override():
+    # 私 的 UniDic 字典音是 わたくし;覆盖表将其校正为歌词语境常用的 わたし。
+    _patch_backend([("私", "ワタクシ")])
+    res = furigana.analyze("私")
+    assert len(res) == 1
+    assert res[0].base == "私"
+    assert res[0].kana == "わたし"
+
+
 def test_analyze_strips_okurigana_from_kanji_reading():
     # 見上げ -> 漢字段"見上"(注音みあ) + 送假名"げ"(已写在歌词,不注音)。
     _patch_backend([("見上げ", "ミアゲ")])

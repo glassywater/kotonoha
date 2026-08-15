@@ -29,6 +29,12 @@ from pathlib import Path
 
 _KATA_TO_HIRA_DELTA = 0x30A1 - 0x3041  # ァ(30A1) -> ぁ(3041)
 
+# 常用读音覆盖：把词典（UniDic）规范读音校正为歌词语境/口语更常用的读音。
+# 只放几乎无歧义、歌词高频的少数项；key 是汉字段拼写，value 是平假名。
+_READING_OVERRIDES: dict[str, str] = {
+    "私": "わたし",  # UniDic 字典音 わたくし；歌词几乎都用 わたし
+}
+
 # 用户放置 UniDic 词典的候选位置（按优先级）。下载 unidic-lite 后把其 dicdir 放到
 # 其中任一位置即可被自动识别；也可用 KOTONOHA_UNIDIC_DIR 环境变量直接指定目录。
 _UNIDIC_CANDIDATES = (
@@ -97,6 +103,11 @@ def _kanji_reading(surface: str, word_kana: str) -> str:
     kanji = "".join(t for t, k in segs if k)
     if not kanji:
         return ""
+    # 常用读音覆盖：词典（UniDic）规范读音可能与歌词语境/口语习惯不同。这里只校正
+    # 几乎无歧义、歌词高频的情况（如 私 的字典音为 わたくし，歌词几乎都用 わたし）。
+    overridden = _READING_OVERRIDES.get(kanji)
+    if overridden:
+        return overridden
     okuri = "".join(t for t, k in segs if not k)
     if okuri:
         okuri_hira = _kata_to_hira(okuri)
