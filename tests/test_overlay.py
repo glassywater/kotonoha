@@ -538,3 +538,57 @@ def test_drag_keeps_the_original_vertical_bottom_range(qapp):
     overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
+
+
+def test_visible_area_ratio_measures_the_on_screen_fraction(qapp):
+    from kotonoha.overlay import MIN_VISIBLE_FRACTION
+
+    overlay = LyricsOverlay(LyricsState(), Config(), UnavailableController())
+    screen = FakeScreen("DP-2", 1080, 480, 2560, 1440)
+
+    # The stale saved position from a changed monitor layout: only a sliver
+    # (80x60) of a 1008x221 surface remains inside the 2560x1440 frame.
+    off = overlay._visible_area_ratio(QPoint(2480, 1380), 1008, 221, screen)
+    assert off < MIN_VISIBLE_FRACTION
+    # A centred placement is fully on-screen.
+    on = overlay._visible_area_ratio(QPoint((2560 - 1008) // 2, 64), 1008, 221, screen)
+    assert on > 0.99
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def test_geometry_recenters_a_nearly_off_screen_saved_position(qapp):
+    from kotonoha.overlay import RECENTER_EDGE_MARGIN
+
+    screen = FakeScreen("DP-2", 1080, 480, 2560, 1440)
+    overlay = LyricsOverlay(
+        LyricsState(),
+        Config(anchor_top=True, margin_edge=1380, margin_x=1704, panel_width_mode="fixed", panel_width=960),
+        UnavailableController(),
+    )
+    with patch.object(overlay, "_target_screen", return_value=screen), patch.object(
+        overlay, "_bind_widget_screen", lambda _s, s=None: None
+    ):
+        overlay._apply_window_geometry(reset_position=True)
+
+    assert overlay._layer_pos == QPoint((2560 - 1008) // 2, RECENTER_EDGE_MARGIN)
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def test_geometry_keeps_a_fully_visible_position(qapp):
+    screen = FakeScreen("DP-2", 1080, 480, 2560, 1440)
+    overlay = LyricsOverlay(
+        LyricsState(),
+        Config(anchor_top=True, margin_edge=20, margin_x=0, panel_width_mode="fixed", panel_width=960),
+        UnavailableController(),
+    )
+    with patch.object(overlay, "_target_screen", return_value=screen), patch.object(
+        overlay, "_bind_widget_screen", lambda _s, s=None: None
+    ):
+        overlay._apply_window_geometry(reset_position=True)
+
+    assert overlay._layer_pos == QPoint((2560 - 1008) // 2, 20)
+    overlay.deleteLater()
+    qapp.processEvents()
+

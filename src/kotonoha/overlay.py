@@ -53,6 +53,12 @@ logger = logging.getLogger(__name__)
 RENDER_INTERVAL_MS = 16  # ~60fps
 CONTROL_ICON_COLOR = "#9AA0A6"  # soft grey so the lock/gear don't glare against the panel
 PILL_RADIUS = 16  # corner radius shared by the pill paint and the input region
+# Startup placement guard: if the saved position would leave less than this
+# fraction of the surface on the target screen, recenter it so the window can't
+# silently vanish off a changed monitor layout.
+MIN_VISIBLE_FRACTION = 0.15
+# Fallback placement used when recentering: this far from the anchored edge.
+RECENTER_EDGE_MARGIN = 64
 
 # Safety-net CJK/system chain appended after the chosen family and the
 # fontconfig-derived fallbacks, so a Latin-only pick (e.g. Inter) still renders
@@ -519,6 +525,36 @@ class LyricsOverlay(QWidget):
         y = self._config.margin_edge if self._config.anchor_top else (screen_h - height - self._config.margin_edge)
         return self._clamp_to_screen(QPoint(x, y), screen=screen, width=width, height=height, allow_partial=True)
 
+    def _visible_area_ratio(self, pos: QPoint, width: int, height: int, screen) -> float:
+        """Fraction of the surface that would fall inside ``screen``'s frame.
+
+        ``pos`` is screen-local (layer-shell left/top margins), and ``screen`` is
+        the target output, so the frame is simply (0,0)..(screen_w, screen_h).
+        """
+        if screen is None or width <= 0 or height <= 0:
+            return 1.0  # no screen/zero size: don't second-guess placement
+        geo = screen.geometry()
+        visible_w = max(0, min(width, geo.width() - pos.x()))
+        visible_h = max(0, min(height, geo.height() - pos.y()))
+        return (visible_w * visible_h) / (width * height)
+
+    def _centered_layer_pos(self, width: int, height: int, screen) -> QPoint:
+        """A safe fully-on-screen default: horizontally centered, near the
+        anchored edge. Used when the saved position would leave the surface
+        almost entirely off-screen."""
+        if screen is None:
+            screen_w, screen_h = 1280, 720
+        else:
+            geo = screen.geometry()
+            screen_w, screen_h = geo.width(), geo.height()
+        x = (screen_w - width) // 2
+        y = (
+            RECENTER_EDGE_MARGIN
+            if self._config.anchor_top
+            else screen_h - height - RECENTER_EDGE_MARGIN
+        )
+        return self._clamp_to_screen(QPoint(x, y), screen=screen, width=width, height=height, allow_partial=False)
+
     def _apply_window_geometry(self, *, reset_position: bool = True) -> None:
         """Fix the surface size and compute its position.
 
@@ -534,6 +570,19 @@ class LyricsOverlay(QWidget):
         self._bind_widget_screen(screen)
         if reset_position:
             self._layer_pos = self._compute_layer_pos(width, height)
+            # Defence-in-depth for "where did the window go": a stale saved
+            # position can place the surface almost entirely off-screen (e.g. the
+            # monitor layout changed since it was dragged, or it was dragged onto
+            # a now-removed output). If less than 15% of the surface would be
+            # visible, snap it back to a fully on-screen default so it cannot be
+            # silently lost. Only applied when we recompute from config, never
+            # during an in-progress drag.
+            if self._visible_area_ratio(self._layer_pos, width, height, screen) < MIN_VISIBLE_FRACTION:
+                logger.warning(
+                    "Overlay position would be %.0f%% on-screen; recentering to a visible spot",
+                    self._visible_area_ratio(self._layer_pos, width, height, screen) * 100,
+                )
+                self._layer_pos = self._centered_layer_pos(width, height, screen)
         if not self._controller.available:
             geo = screen.geometry()
             self.move(geo.x() + self._layer_pos.x(), geo.y() + self._layer_pos.y())
