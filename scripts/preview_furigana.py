@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import sys
 
-import fugashi
+import fugashi  # noqa: F401  # preview tool: requires the furigana extra; see pyproject [tool.ty] overrides
 from PyQt6.QtCore import QRectF, Qt
 from PyQt6.QtGui import (
     QColor,

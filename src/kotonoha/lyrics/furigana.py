@@ -92,7 +92,7 @@ def _get_tagger():
     if _tagger is not None or _tagger_error is not None:
         return _tagger
     try:
-        import fugashi  # type: ignore[import-not-found]
+        import fugashi  # noqa: F401  # optional extra (pypi: fugashi); see pyproject [tool.ty] overrides
     except ImportError as exc:  # 未安装 -> 永久禁用，避免每次重试导入
         _tagger_error = exc
         return None

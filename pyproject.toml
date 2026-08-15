@@ -67,3 +67,12 @@ asyncio_mode = "auto"
 
 [tool.uv]
 package = true
+
+[tool.ty]
+overrides = [
+  # fugashi (optional furigana extra) has no type stubs, so its imports cannot be
+  # resolved by ty. Scope an ignore to the two modules that use it, leaving the rest
+  # of the project under strict unresolved-import checking.
+  { include = ["src/kotonoha/lyrics/furigana.py"], rules = { "unresolved-import" = "ignore", "unresolved-attribute" = "ignore" } },
+  { include = ["scripts/preview_furigana.py"], rules = { "unresolved-import" = "ignore", "unresolved-attribute" = "ignore" } },
+]
