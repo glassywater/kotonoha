@@ -101,10 +101,15 @@ fi
 # --- Compilation ---
 log_info "Compiling..."
 
-# Static libstdc++ for portability (optional env var to disable)
-LINK_FLAGS="-static-libstdc++ -static-libgcc"
-if [ "$USE_SYSTEM_LIBS" == "1" ]; then
-    log_info "Using system libraries (dynamic linking)"
+# Prefer static libstdc++ when the gcc toolchain ships the .a (self-contained .so),
+# but fall back to dynamic linking when the static archive isn't installed (e.g.
+# Fedora needs the extra libstdc++-static package). Dynamic linking is fine for a
+# bridge loaded by the same-distro runtime.
+GCC_LIB_DIR="$(gcc -print-file-name=libstdc++ 2>/dev/null)"
+if [ -f "$GCC_LIB_DIR" ]; then
+    LINK_FLAGS="-static-libstdc++ -static-libgcc"
+else
+    log_info "Static libstdc++ not available; linking dynamically."
     LINK_FLAGS=""
 fi
 
