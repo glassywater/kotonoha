@@ -158,6 +158,39 @@ def test_download_skips_when_dict_already_present(tmp_path):
     assert result == dicdir
 
 
+def test_download_url_falls_back_to_known_when_refresh_fails(monkeypatch):
+    # 联网刷新失败时，current URL 保持已知兜底值。
+    monkeypatch.setattr(furigana, "_LATEST_UNIDIC_SDIST_URL", "https://known/fallback.tar.gz")
+    from unittest.mock import patch as _patch
+
+    with _patch.object(furigana.urllib.request, "urlopen", side_effect=OSError("network down")):
+        result = furigana.refresh_unidic_sdist_url()
+    assert result == "https://known/fallback.tar.gz"
+    assert furigana.current_unidic_sdist_url() == "https://known/fallback.tar.gz"
+
+
+def test_download_url_updated_on_successful_refresh(monkeypatch):
+    # 联网成功时缓存更新为 PyPI 返回的最新 sdist URL。
+    fake_resp = type(
+        "R",
+        (),
+        {
+            "__enter__": lambda self: self,
+            "__exit__": lambda self, *a: None,
+            "read": lambda self: __import__("json").dumps(
+                {"urls": [{"filename": "x.whl", "url": "https://nope/w.whl"},
+                          {"filename": "unidic-lite-9.9.tar.gz", "url": "https://new/latest.tar.gz"}]}
+            ).encode(),
+        },
+    )()
+    from unittest.mock import patch as _patch
+
+    with _patch.object(furigana.urllib.request, "urlopen", return_value=fake_resp):
+        result = furigana.refresh_unidic_sdist_url()
+    assert result == "https://new/latest.tar.gz"
+    assert furigana.current_unidic_sdist_url() == "https://new/latest.tar.gz"
+
+
 # --- KaraokeLabel integration ---
 
 def _make_label(qapp, **style_kwargs) -> KaraokeLabel:

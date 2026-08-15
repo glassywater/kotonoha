@@ -9,6 +9,7 @@ from :mod:`kotonoha.strings`.
 from __future__ import annotations
 
 import os
+import threading
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -736,15 +737,22 @@ class SettingsDialog(QDialog):
 
     def _start_furigana_download(self) -> None:
         # Open the UniDic tarball in the system browser so the user downloads it and
-        # chooses the save location themselves. Uses a stable known PyPI URL so the
-        # browser opens immediately without a network round-trip.
+        # picks the save location themselves. Uses the latest known URL immediately
+        # (no network round-trip on the UI thread), and refreshes the cached latest
+        # URL in the background for the next click.
         from PyQt6.QtCore import QUrl
         from PyQt6.QtGui import QDesktopServices
 
         from .lyrics import furigana as _furigana_mod
 
-        QDesktopServices.openUrl(QUrl(_furigana_mod._UNIDIC_LITE_SDIST_URL))
+        url = _furigana_mod.current_unidic_sdist_url()
+        QDesktopServices.openUrl(QUrl(url))
         self._furigana_download.setToolTip(t("set.furigana_download_browser_hint"))
+        # Background refresh so a newer unidic-lite release is used next time.
+        self._furigana_refresh = threading.Thread(
+            target=_furigana_mod.refresh_unidic_sdist_url, daemon=True
+        )
+        self._furigana_refresh.start()
 
     def _panel_tab(self) -> QWidget:
         c = self._config

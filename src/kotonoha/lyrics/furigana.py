@@ -155,17 +155,41 @@ def referenced_dicdir() -> Path | None:
 _UNIDIC_LITE_VERSION = "1.0.8"
 _UNIDIC_LITE_PKG = "unidic-lite"
 _UNIDIC_LITE_INNER = "unidic_lite/dicdir"  # 安装包里字典数据的相对路径
-# 稳定已知的 sdist URL（PyPI 文件 URL 含内容 hash，恒定）。用于“下载”按钮直接打开
-# 浏览器，避免每次联网查询 PyPI JSON（会卡 UI）。
-_UNIDIC_LITE_SDIST_URL = (
+# 稳定的已知 sdist URL（PyPI 文件 URL 含内容 hash，恒定到该版本退役）。作为兜底：
+# 下载按钮点击时立刻用它弹浏览器，避免联网卡 UI；后台会刷新为最新版本。
+_LATEST_UNIDIC_SDIST_URL = (
     "https://files.pythonhosted.org/packages/55/2b/"
     "8cf7514cb57d028abcef625afa847d60ff1ffbf0049c36b78faa7c35046f/"
     "unidic-lite-1.0.8.tar.gz"
 )
 
 
+def current_unidic_sdist_url() -> str:
+    """当前可用的下载 URL（可能已由后台刷新为最新版本）。点击按钮用它，零网络往返。"""
+    return _LATEST_UNIDIC_SDIST_URL
+
+
+def refresh_unidic_sdist_url() -> str:
+    """联网查询 unidic-lite 最新 release 的 sdist URL 并缓存返回。
+
+    应在线程里调用（PyPI 网络可达时可更新，失败时保持已有兜底 URL，不抛错）。
+    """
+    global _LATEST_UNIDIC_SDIST_URL
+    url = f"https://pypi.org/pypi/{_UNIDIC_LITE_PKG}/json"  # 不带版本 = 最新版
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        for f in data.get("urls", []):
+            if f.get("filename", "").endswith(".tar.gz"):
+                _LATEST_UNIDIC_SDIST_URL = f["url"]
+                return f["url"]
+    except (urllib.error.URLError, OSError, ValueError):
+        pass
+    return _LATEST_UNIDIC_SDIST_URL
+
+
 def _unidic_lite_pypi_url() -> str:
-    """向 PyPI JSON API 取 unidic-lite sdist 的下载 URL。"""
+    """向 PyPI JSON API 取 unidic-lite sdist 的下载 URL（同步，默认当前版本）。"""
     url = f"https://pypi.org/pypi/{_UNIDIC_LITE_PKG}/{_UNIDIC_LITE_VERSION}/json"
     with urllib.request.urlopen(url, timeout=30) as resp:
         data = json.loads(resp.read().decode("utf-8"))
