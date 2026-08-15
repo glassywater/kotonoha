@@ -668,6 +668,10 @@ class SettingsDialog(QDialog):
         form.addRow(t("set.context_font_size"), self._context_font_size)
         self._translation_font_size = self._spin(8, 120, c.translation_font_size, " px")
         form.addRow(t("set.translation_font_size"), self._translation_font_size)
+
+        self._furigana = QCheckBox(t("set.furigana"))
+        self._furigana.setChecked(c.furigana)
+        form.addRow(self._furigana)
         return page
 
     def _panel_tab(self) -> QWidget:
@@ -1052,6 +1056,7 @@ class SettingsDialog(QDialog):
             font_size=self._font_size.value(),
             context_font_size=self._context_font_size.value(),
             translation_font_size=self._translation_font_size.value(),
+            furigana=self._furigana.isChecked(),
             opacity=self._panel_opacity["opacity"],
             frost_opacity=self._panel_opacity["frost_opacity"],
             panel_style=str(self._panel.currentData()),

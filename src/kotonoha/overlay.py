@@ -290,7 +290,8 @@ class LyricsOverlay(QWidget):
         if config.font_style:
             current_font.setStyleName(config.font_style)  # e.g. "Bold", "Light Italic"
         self._current.set_style(
-            current_font, config.accent_start, config.accent_end, config.accent_sweep, base, shadow
+            current_font, config.accent_start, config.accent_end, config.accent_sweep, base, shadow,
+            furigana=config.furigana,
         )
         self._current.set_effects(
             glow=config.fx_glow, word_pop=config.fx_word_pop,

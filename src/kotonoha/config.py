@@ -89,6 +89,9 @@ class Config:
     fx_glow: bool = False            # soft accent glow behind the current line
     fx_word_pop: bool = False        # brighten the word currently being sung
     fx_intensity: str = "subtle"     # "subtle" | "expressive"
+    # Ruby/振り仮名 for Japanese kanji (auto furigana). No-op when the fugashi
+    # analyzer is unavailable — rendering then degrades to plain text.
+    furigana: bool = False           # show hiragana readings above kanji in the main line
 
     def clamped(self) -> Config:
         """Return a copy with values forced into sane ranges."""
@@ -127,6 +130,7 @@ class Config:
             fx_glow=bool(self.fx_glow),
             fx_word_pop=bool(self.fx_word_pop),
             fx_intensity=self.fx_intensity if self.fx_intensity in ("subtle", "expressive") else "subtle",
+            furigana=bool(self.furigana),
             lyrics_sources=_clean_sources(self.lyrics_sources),
             prefer_best_lyrics=bool(self.prefer_best_lyrics),
             fuzzy_match=bool(self.fuzzy_match),
