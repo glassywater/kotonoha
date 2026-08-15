@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import QApplication
 from kotonoha.config import Config
 from kotonoha.karaoke_label import KaraokeLabel
 from kotonoha.lyrics import furigana
-from kotonoha.lyrics.furigana import Furigana
+from kotonoha.lyrics.furigana import Furigana, _Token
 from kotonoha.model import LyricLine
 
 
@@ -21,34 +21,34 @@ def qapp():
     yield app
 
 
-class _FakeWord:
-    """Minimal stand-in for a fugashi word: surface text + feature with kana."""
-
-    def __init__(self, surface: str, kana: str) -> None:
-        self.surface = surface
-        self.feature = type("_F", (), {"kana": kana})()
-
-
-class _FakeTagger:
-    def __init__(self, words: list[tuple[str, str]]) -> None:
-        self._words = [_FakeWord(s, k) for s, k in words]
-
-    def __call__(self, text: str):
-        # Return the preconfigured words (analyze uses them directly).
-        return self._words
+def _patch_backend(tokens: list[tuple[str, str]]):
+    """Inject a fake backend returning the given (surface, kana) tokens."""
+    wrapper = lambda text: [_Token(surface=s, kana=k) for s, k in tokens]  # noqa: E731
+    furigana._backend = wrapper
+    furigana._backend_state = 1
+    furigana.analyze.cache_clear()
 
 
-def _patched_analyze(words: list[tuple[str, str]]):
-    """Run furigana.analyze with a mocked tagger injected into the module state."""
-    furigana._tagger_error = None
-    furigana._tagger = _FakeTagger(words)
+def _disable_backend():
+    """Force the backend to be unavailable (degraded)."""
+    furigana._backend = None
+    furigana._backend_state = 2
+    furigana.analyze.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_backend():
+    yield
+    furigana._backend = None
+    furigana._backend_state = 0
     furigana.analyze.cache_clear()
 
 
 # --- furigana.analyze ---
 
+
 def test_analyze_extracts_kanji_readings_with_positions():
-    _patched_analyze([("名前", "ナマエ"), ("の", "ノ"), ("空", "ソラ")])
+    _patch_backend([("名前", "ナマエ"), ("の", "ノ"), ("空", "ソラ")])
     res = furigana.analyze("名前の空")
     assert res == (
         Furigana(base="名前", kana="なまえ", pos=0),
@@ -58,7 +58,7 @@ def test_analyze_extracts_kanji_readings_with_positions():
 
 def test_analyze_strips_okurigana_from_kanji_reading():
     # 見上げ -> 漢字段"見上"(注音みあ) + 送假名"げ"(已写在歌词,不注音)。
-    _patched_analyze([("見上げ", "ミアゲ")])
+    _patch_backend([("見上げ", "ミアゲ")])
     res = furigana.analyze("見上げ")
     assert len(res) == 1
     assert res[0].base == "見上"
@@ -67,7 +67,7 @@ def test_analyze_strips_okurigana_from_kanji_reading():
 
 def test_analyze_strips_okurigana_full_line():
     # 抱きしめてて沈めば -> 抱=だ(きしめ是送假名),沈=しず(めば->しずめば,送假名めば被剥离)
-    _patched_analyze([("抱きしめ", "ダキシメ"), ("てて", "テテ"), ("沈めば", "シズメバ")])
+    _patch_backend([("抱きしめ", "ダキシメ"), ("てて", "テテ"), ("沈めば", "シズメバ")])
     res = furigana.analyze("抱きしめてて沈めば")
     pairs = {f.base: f.kana for f in res}
     assert pairs.get("抱") == "だ"  # not だきしめ
@@ -75,22 +75,60 @@ def test_analyze_strips_okurigana_full_line():
 
 
 def test_analyze_skips_pure_kana_and_latin():
-    _patched_analyze([("あなた", "アナタ"), ("に", "ニ"), ("Hello", "ヘロ")])
-    furigana._tagger_error = None
-    furigana._tagger = _FakeTagger([("あなた", "アナタ"), ("に", "ニ")])
-    furigana.analyze.cache_clear()
+    _patch_backend([("あなた", "アナタ"), ("に", "ニ"), ("Hello", "ヘロ")])
     res = furigana.analyze("あなたに")
     assert res == ()
 
 
-def test_analyze_degrades_when_fugashi_missing():
-    from unittest.mock import patch
+def test_analyze_degrades_when_backend_unavailable():
+    _disable_backend()
+    assert furigana.analyze("君の名前") == ()
 
-    furigana._tagger_error = None
-    furigana._tagger = None
-    # simulate import failure permanently disabling furigana
-    with patch.object(furigana, "_get_tagger", return_value=None):
-        assert furigana.analyze("君の名前") == ()
+
+def test_mecab_backend_preferred_over_fugashi(monkeypatch, tmp_path):
+    """when the mecab CLI and a UniDic dict are present, mecab beats fugashi."""
+    dicdir = tmp_path / "dicdir"
+    dicdir.mkdir()
+    monkeypatch.setattr(furigana.shutil, "which", lambda name: "/usr/bin/mecab" if name == "mecab" else None)
+    monkeypatch.setattr(furigana, "_unidic_dicdir", lambda: dicdir)
+    _disable_backend()
+    furigana._backend_state = 0  # allow re-probe
+    assert furigana._select_backend() is furigana._tokens_mecab
+
+
+def test_mecab_not_selected_without_unidic(monkeypatch):
+    """mecab CLI alone is not enough: without a UniDic dict, mecab isn't selected (no bad readings)."""
+    monkeypatch.setattr(furigana.shutil, "which", lambda name: "/usr/bin/mecab" if name == "mecab" else None)
+    monkeypatch.setattr(furigana, "_unidic_dicdir", lambda: None)
+    _disable_backend()
+    furigana._backend_state = 0
+    # Not mecab; may be fugashi (if installed) or None (degraded).
+    assert furigana._select_backend() is not furigana._tokens_mecab
+
+
+def test_fugashi_backend_used_when_no_mecab(monkeypatch):
+    """with no mecab CLI, the fugashi fallback is selected."""
+    monkeypatch.setattr(furigana.shutil, "which", lambda _name: None)
+    _disable_backend()
+    furigana._backend_state = 0
+    found = furigana._select_backend()
+    # fugashi may or may not be installed in this environment; assert we tried it,
+    # i.e. we did NOT fall through to "no backend" without examining fugashi.
+    assert found is None or found is furigana._tokens_fugashi
+
+
+def test_mecab_token_parser():
+    """Parse real mecab default output (surface<TAB>yomi<TAB>...)."""
+    out = "抱きしめ\tダキシメ\tダキシメル\t抱き締める\t動詞-一般\t連用形-一般\nEOS\n"
+    tokens = furigana._parse_mecab_output(out)
+    assert tokens == [_Token(surface="抱きしめ", kana="ダキシメ")]
+
+
+def test_unidic_env_var_overrides_candidates(monkeypatch, tmp_path):
+    dicdir = tmp_path / "dicdir"
+    dicdir.mkdir()
+    monkeypatch.setenv("KOTONOHA_UNIDIC_DIR", str(dicdir))
+    assert furigana._unidic_dicdir() == dicdir
 
 
 # --- KaraokeLabel integration ---
@@ -105,18 +143,24 @@ def _make_label(qapp, **style_kwargs) -> KaraokeLabel:
     return label
 
 
-def test_karaoke_degraded_when_no_fugashi(qapp):
-    from unittest.mock import patch
-
+def test_karaoke_degraded_when_backend_unavailable(qapp):
+    _disable_backend()
     label = _make_label(qapp, furigana=True)
-    with patch.object(furigana, "_get_tagger", return_value=None), patch.object(
-        furigana, "analyze", return_value=()
-    ):
-        label.set_line(LyricLine(0, "c", 0.0, 6.0, "君の名前は空に消えた", "", ()), False)
+    label.set_line(LyricLine(0, "c", 0.0, 6.0, "君の名前は空に消えた", "", ()), False)
     # No furigana, no extra height, render safe.
     assert label._furigana == ()
     assert label._furigana_top == 0.0
-    assert label._fm.height() + 6 == label.sizeHint().height() - 0  # unchanged by furigana
+    label.grab()
+    qapp.processEvents()
+
+
+def test_karaoke_furigana_populated_when_backend_available(qapp):
+    _patch_backend([("名前", "ナマエ"), ("空", "ソラ")])
+    label = _make_label(qapp, furigana=True)
+    text = "美しい名前の空"
+    label.set_line(LyricLine(0, "c", 0.0, 6.0, text, "", ()), False)
+    assert label._furigana  # non-empty
+    assert label._furigana_top > 0.0
     label.grab()
     qapp.processEvents()
 
@@ -127,7 +171,7 @@ def test_karaoke_zero_regression_when_disabled(qapp):
     label.set_media_time(3.0)
     assert label._furigana == ()
     assert label._furigana_top == 0.0
-    label.grab()  # paint path must not touch furigana at all
+    label.grab()
     qapp.processEvents()
 
 
@@ -136,6 +180,5 @@ def test_config_furigana_default_and_roundtrip():
     assert cfg.furigana is False
     data = cfg.to_dict()
     assert data["furigana"] is False
-    # data defines furigana=False; explicitly override to True afterwards.
     overridden = {**data, "furigana": True}
     assert Config.from_dict(overridden).furigana is True

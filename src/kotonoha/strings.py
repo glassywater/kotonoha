@@ -77,16 +77,19 @@ STRINGS: dict[str, dict[str, str]] = {
                      "zh-Hans": "日文汉字注音（汉字上方平假名）",
                      "zh-Hant": "日文漢字注音（漢字上方平假名）",
                      "ja": "ルビを表示（漢字の上にひらがな）"},
-    "set.furigana_hint": {"en": "Requires the optional 'furigana' analyzer (fugashi + unidic-lite). "
-                                 "If lyrics don't show readings, install it with: "
-                                 "pip install fugashi unidic-lite  (or 'uv sync --extra furigana').",
-                          "zh-Hans": "需要可选的注音分析器（fugashi + unidic-lite）。若歌词未显示读音，请安装："
-                                     "pip install fugashi unidic-lite（或 uv sync --extra furigana）。",
-                          "zh-Hant": "需要可選的注音分析器（fugashi + unidic-lite）。若歌詞未顯示讀音，請安裝："
-                                     "pip install fugashi unidic-lite（或 uv sync --extra furigana）。",
-                          "ja": "オプションの注音（ふりがな）分析器（fugashi + unidic-lite）が必要です。"
-                                 "読みが表示されない場合は 次 をインストール: "
-                                 "pip install fugashi unidic-lite（または uv sync --extra furigana）。"},
+    "set.furigana_hint": {"en": "Readings need a Japanese analyzer and dictionary. "
+                                 "Preferred: install the system `mecab` package (and put a UniDic dictionary "
+                                 "under ~/.local/share/kotonoha/unidic/, or set KOTONOHA_UNIDIC_DIR). "
+                                 "Alternative: pip install fugashi unidic-lite.",
+                          "zh-Hans": "需要日文分析器与词典才能显示注音。推荐安装系统 mecab 包（并把 UniDic 词典放到 "
+                                     "~/.local/share/kotonoha/unidic/，或设置 KOTONOHA_UNIDIC_DIR 变量）。"
+                                     "备选：pip install fugashi unidic-lite。",
+                          "zh-Hant": "需要日文分析器與詞典才能顯示注音。推薦安裝系統 mecab 套件（並把 UniDic 詞典放到 "
+                                     "~/.local/share/kotonoha/unidic/，或設定 KOTONOHA_UNIDIC_DIR 變數）。"
+                                     "備選：pip install fugashi unidic-lite。",
+                          "ja": "読みには日本語解析器と辞書が必要です。推奨: システムの mecab パッケージを"
+                                 "インストールし、辞書を ~/.local/share/kotonoha/unidic/ に置く"
+                                 "（または KOTONOHA_UNIDIC_DIR を設定）。代替: pip install fugashi unidic-lite。"},
     "set.opacity": {"en": "Panel opacity", "zh-Hans": "面板不透明度",
                     "zh-Hant": "面板不透明度", "ja": "パネル不透明度"},
     "set.panel_style": {"en": "Panel style", "zh-Hans": "面板样式", "zh-Hant": "面板樣式", "ja": "パネルの種類"},

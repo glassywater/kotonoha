@@ -90,7 +90,7 @@ Open **Settings** from the tray. Under **Sources**, providers can be reordered o
 
 Settings also controls fonts, colors, opacity, position, translation, icons, panel style, and lyric effects.
 
-**Furigana** (hiragana readings above Japanese kanji) is an opt-in display feature backed by the optional `furigana` extra (`fugashi` + `unidic-lite`). When you enable it and the analyzer isn't installed (for example an installed package that doesn't bundle the extra), lyrics simply don't show readings and the Settings screen prints an install hint. Install it with `pip install fugashi unidic-lite` (or `uv sync --extra furigana`).
+**Furigana** (hiragana readings above Japanese kanji) is an opt-in display feature. It uses either the system `mecab` analyzer (preferred for packaged installs — add it via your package manager, e.g. `dnf install mecab`, and optionally drop a UniDic dictionary at `~/.local/share/kotonoha/unidic/` or set `KOTONOHA_UNIDIC_DIR`), or the optional Python `furigana` extra (`fugashi` + `unidic-lite`) as a fallback. When no analyzer/dictionary is available, lyrics simply don't show readings and the Settings screen prints an install hint.
 
 ## Cider plugin (optional)
 
