@@ -280,14 +280,28 @@ def test_analyze_expands_chouon_for_kanji_readings(raw_kana, base, expected_kana
 
 
 def test_furigana_renders_adjacent_blocks_without_collision(qapp):
-    # 雷鳴(らいめい) と 繰り返す(くりかえす) が隣接する実例:rendering 必須安全。
-    _patch_backend([("雷鳴", "ライメー"), ("を", "オ"), ("繰り返す", "クリカエス")])
+    # 雷鳴(らいめい) と 繰り返す が隣接する実例。繰り返す は 漢字-送仮名-漢字-送仮名
+    # (繰+り+返+す) で base「繰返」が文中に連続存在しない → コメントを誤らせるより
+    # スキップ。「鼓動」「雷鳴」は正しく注音され、レンダリングは安全。
+    _patch_backend([("鼓動", "コドー"), ("は", "ワ"), ("雷鳴", "ライメー"), ("を", "オ"), ("繰り返す", "クリカエス")])
     label = _make_label(qapp, furigana=True)
     text = "鼓動は雷鳴を繰り返す"
     label.set_line(LyricLine(0, "c", 0.0, 9.0, text, "", ()), False)
     combined = {f.base: f.kana for f in label._furigana}
-    assert combined["雷鳴"] == "らいめい"  # 長音符已展开为表记
-    assert combined["繰返"] == "くりかえす"
+    assert combined["鼓動"] == "こどう"  # 長音符已展开为表记
+    assert combined["雷鳴"] == "らいめい"
+    assert "繰返" not in combined  # 非連続 base はスキップ
     label.grab()  # paints through the (overlap-avoiding) ruby pass without raising
     qapp.processEvents()
+
+
+def test_analyze_skips_non_contiguous_kanji_base():
+    # 繰り返す = 繰 + り + 返 + す で、base「繰返」は行文中に連続して現れない。
+    # 一個の註音ブロックでは正しく位置づけできないため、誤注音の代わりにスキップ。
+    _patch_backend([("繰り返す", "クリカエス")])
+    assert furigana.analyze("繰り返す") == ()
+    # さらに前後の漢字語には影響が出ない。
+    _patch_backend([("鼓動", "コドー"), ("は", "ワ"), ("繰り返す", "クリカエス"), ("明日", "アス")])
+    res = furigana.analyze("鼓動は繰り返す明日")
+    assert {f.base for f in res} == {"鼓動", "明日"}
 

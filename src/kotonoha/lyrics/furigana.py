@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -31,6 +32,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 _KATA_TO_HIRA_DELTA = 0x30A1 - 0x3041  # ァ(30A1) -> ぁ(3041)
 
@@ -418,7 +421,16 @@ def analyze(text: str) -> tuple[Furigana, ...]:
                 continue
             pos = text.find(base, search_from)
             if pos < 0:
-                pos = search_from
+                # base is not a contiguous substring of the line text. This happens
+                # when a kanji run is split by okurigana written in the lyric, e.g.
+                # 繰り返す → 繰 + り + 返 + す, so base="繰返" does not occur verbatim.
+                # A single block can't be positioned reliably then, and drawing the
+                # whole word reading over just the first kanji reads wrong (くりかえす
+                # pinned on 繰). Skip it rather than mis-annotate.
+                logger.debug(
+                    "Skipping furigana for %r: base %r not contiguous in %r", surface, base, text
+                )
+                continue
             out.append(Furigana(base=base, kana=kana, pos=pos))
             search_from = pos + len(base)
         return tuple(out)
