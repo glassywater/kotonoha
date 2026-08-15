@@ -380,7 +380,14 @@ class LyricsOverlay(QWidget):
         main = self._config.font_size
         context = 0 if self._config.current_line_only else self._config.context_font_size
         translation = self._config.translation_font_size if self._config.show_translation else 0
-        lines = int(main * 1.6) + 2 * int(context * 1.4) + int(translation * 1.6)
+        main_lines = int(main * 1.6)
+        if self._config.furigana:
+            # Reserve headroom above the main line for the hiragana ruby row so a
+            # multi-kana reading is not clipped at the top of the panel. Slightly
+            # generous: the ruby font is ~0.55x and its metrics roughly 0.75x the
+            # main size, so this comfortably covers _furigana_top.
+            main_lines += max(1, int(main * 0.75) + 8)
+        lines = main_lines + 2 * int(context * 1.4) + int(translation * 1.6)
         chrome = 22 + 24 + 34  # control bar + container v-margins + spacing/slack
         return max(140, lines + chrome)
 
