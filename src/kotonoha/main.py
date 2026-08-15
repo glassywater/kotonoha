@@ -85,16 +85,26 @@ def entry_point() -> int:
     os.environ.setdefault("QT_SCALE_FACTOR", "1")
 
     import qasync
-    from PyQt6.QtCore import Qt
+    from PyQt6.QtCore import QCoreApplication, Qt
     from PyQt6.QtWidgets import QApplication
 
     if hasattr(Qt.HighDpiScaleFactorRoundingPolicy, "PassThrough"):
         QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
 
+    # Set the app identity BEFORE QApplication() constructs the windowing stack.
+    # On KDE Wayland the platformtheme plugin (platformtheme_kde) snapshots the
+    # application name when QApplication initialises and builds a KConfig from it
+    # (default file: <appname>rc). If the name is still empty at that point KConfig
+    # falls back to the bare file "rc" and, if it cannot be written, KDE pops
+    # "Configuration file ...rc not writable". These are static on QCoreApplication,
+    # so they take effect before the first QWidget/canvas exists.
+    QCoreApplication.setOrganizationName("kotonoha")
+    QCoreApplication.setApplicationName("kotonoha")
+
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     app = QApplication(sys.argv)
-    app.setApplicationName("kotonoha")
+    app.setApplicationDisplayName("Kotonoha")
     app.setQuitOnLastWindowClosed(False)  # overlay close should not kill the tray
     app.setProperty("xdg_current_desktop", os.environ.get("XDG_CURRENT_DESKTOP", ""))
     app.setProperty("cli_port", args.port)
