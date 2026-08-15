@@ -40,7 +40,7 @@ from PyQt6.QtWidgets import (
 
 from .clock import MediaClock
 from .config import Config
-from .icons import lock_icon, settings_icon
+from .icons import lock_icon, player_icon, settings_icon
 from .karaoke_label import KaraokeLabel
 from .lyrics.hanzi_fold import convert_script
 from .model import EMPTY_SNAPSHOT, LyricLine, LyricsSnapshot
@@ -240,17 +240,19 @@ class LyricsOverlay(QWidget):
         bar.addStretch(1)
 
         # Live MPRIS player selector (ported from waylyrics): a button that pops a
-        # submenu listing every reachable player, refreshed on open.
+        # Live MPRIS player selector (ported from waylyrics): a button that pops a
+        # submenu listing every reachable player, refreshed on open. We avoid
+        # QToolButton.setMenu (it draws a down-arrow on the round control); instead
+        # refresh and pop the menu manually on click.
         self._player_btn = QToolButton(self._container)
         self._player_btn.setFixedSize(22, 22)
+        self._player_btn.setIconSize(QSize(15, 15))
         self._player_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._player_btn.setStyleSheet(CONTROL_BUTTON_STYLE)
-        self._player_btn.setText("♪")
+        self._player_btn.setIcon(player_icon(CONTROL_ICON_COLOR))
         self._player_btn.setToolTip(t("overlay.select_player"))
         self._player_menu = QMenu(self._player_btn)
-        self._player_menu.aboutToShow.connect(self._refresh_player_menu)
-        self._player_btn.setMenu(self._player_menu)
-        self._player_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._player_btn.clicked.connect(self._show_player_menu)
         bar.addWidget(self._player_btn)
 
         self._lock_btn = QToolButton(self._container)
@@ -282,6 +284,11 @@ class LyricsOverlay(QWidget):
     def _update_lock_icon(self) -> None:
         self._lock_btn.setIcon(lock_icon(self._passthrough, self._control_icon_color()))
         self._lock_btn.setToolTip(t("overlay.locked") if self._passthrough else t("overlay.unlocked"))
+
+    def _show_player_menu(self) -> None:
+        """Refresh and pop the player selector menu at the button (no dropdown arrow)."""
+        self._refresh_player_menu()
+        self._player_menu.popup(self._player_btn.mapToGlobal(QPoint(0, 0)))
 
     def _refresh_player_menu(self) -> None:
         """Rebuild the player submenu with the current MPRIS players (async)."""

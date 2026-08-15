@@ -30,6 +30,10 @@ _SETTINGS = _SVG_HEAD + (
     '<path d="M20 7h-9"/><path d="M14 17H5"/>'
     '<circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>'
 )
+# Lucide: music (note) — player selector glyph
+_PLAYER = _SVG_HEAD + (
+    '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>'
+)
 
 
 def _render(svg: str, color: str) -> QIcon:
@@ -49,3 +53,7 @@ def lock_icon(closed: bool, color: str = "#FFFFFF") -> QIcon:
 
 def settings_icon(color: str = "#FFFFFF") -> QIcon:
     return _render(_SETTINGS, color)
+
+
+def player_icon(color: str = "#FFFFFF") -> QIcon:
+    return _render(_PLAYER, color)
