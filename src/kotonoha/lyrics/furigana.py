@@ -155,6 +155,13 @@ def referenced_dicdir() -> Path | None:
 _UNIDIC_LITE_VERSION = "1.0.8"
 _UNIDIC_LITE_PKG = "unidic-lite"
 _UNIDIC_LITE_INNER = "unidic_lite/dicdir"  # 安装包里字典数据的相对路径
+# 稳定已知的 sdist URL（PyPI 文件 URL 含内容 hash，恒定）。用于“下载”按钮直接打开
+# 浏览器，避免每次联网查询 PyPI JSON（会卡 UI）。
+_UNIDIC_LITE_SDIST_URL = (
+    "https://files.pythonhosted.org/packages/55/2b/"
+    "8cf7514cb57d028abcef625afa847d60ff1ffbf0049c36b78faa7c35046f/"
+    "unidic-lite-1.0.8.tar.gz"
+)
 
 
 def _unidic_lite_pypi_url() -> str:

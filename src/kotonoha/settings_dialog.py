@@ -9,7 +9,6 @@ from :mod:`kotonoha.strings`.
 from __future__ import annotations
 
 import os
-import threading
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -342,9 +341,6 @@ class SettingsDialog(QDialog):
     applied = pyqtSignal(object)  # emits Config
     clear_cache_requested = pyqtSignal()
     restart_requested = pyqtSignal()
-    # Furigana dictionary download progress/result (emitted from a worker thread).
-    furigana_progress = pyqtSignal(str)
-    furigana_done = pyqtSignal(bool)  # True = downloaded ok, False = failed
 
     def __init__(self, config: Config, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -717,8 +713,6 @@ class SettingsDialog(QDialog):
         self._furigana_path.textChanged.connect(self._refresh_furigana_status)
         self._furigana_download.clicked.connect(self._start_furigana_download)
         self._furigana_browse.clicked.connect(self._browse_furigana_path)
-        self.furigana_progress.connect(self._on_furigana_progress)
-        self.furigana_done.connect(self._on_furigana_done)
         return row
 
     def _refresh_furigana_status(self) -> None:
@@ -741,45 +735,16 @@ class SettingsDialog(QDialog):
             self._furigana_path.setText(chosen)
 
     def _start_furigana_download(self) -> None:
+        # Open the UniDic tarball in the system browser so the user downloads it and
+        # chooses the save location themselves. Uses a stable known PyPI URL so the
+        # browser opens immediately without a network round-trip.
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtGui import QDesktopServices
+
         from .lyrics import furigana as _furigana_mod
 
-        dest = Path(self._furigana_path.text().strip())
-        self._furigana_download.setEnabled(False)
-        self._furigana_download.setText(t("set.furigana_downloading"))
-        self._refresh_furigana_status()
-
-        def writer(target: Path) -> Path:
-            return _furigana_mod.download_unidic(target)
-
-        thread = threading.Thread(target=self._run_download, args=(dest, writer), daemon=True)
-        thread.start()
-
-    def _run_download(self, dest: Path, fn) -> None:
-        try:
-            fn(dest)
-            self.furigana_done.emit(True)
-        except Exception as exc:  # noqa: BLE001 - surface any download failure
-            from .lyrics import furigana as _furigana_mod
-
-            _furigana_mod._furigana_last_error = exc
-            self.furigana_done.emit(False)
-
-    def _on_furigana_progress(self, text: str) -> None:
-        self._furigana_download.setText(text)
-
-    def _on_furigana_done(self, ok: bool) -> None:
-        from .lyrics import furigana as _furigana_mod
-
-        self._furigana_download.setText(t("set.furigana_download"))
-        prop = getattr(_furigana_mod, "_furigana_last_error", None)
-        self._refresh_furigana_status()
-        if not ok:
-            # brief status feedback via the status label color (leave ✗)
-            self._furigana_download.setToolTip(
-                str(prop) if prop else t("set.furigana_download_failed")
-            )
-        else:
-            self._furigana_download.setToolTip(t("set.furigana_download_hint"))
+        QDesktopServices.openUrl(QUrl(_furigana_mod._UNIDIC_LITE_SDIST_URL))
+        self._furigana_download.setToolTip(t("set.furigana_download_browser_hint"))
 
     def _panel_tab(self) -> QWidget:
         c = self._config

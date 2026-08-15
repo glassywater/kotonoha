@@ -80,15 +80,22 @@ STRINGS: dict[str, dict[str, str]] = {
     "set.furigana_dict": {"en": "UniDic dictionary", "zh-Hans": "UniDic 词典",
                           "zh-Hant": "UniDic 詞典", "ja": "UniDic 辞書"},
     "set.furigana_download": {"en": "Download", "zh-Hans": "下载", "zh-Hant": "下載", "ja": "ダウンロード"},
-    "set.furigana_downloading": {"en": "Downloading…", "zh-Hans": "下载中…",
-                                 "zh-Hant": "下載中…", "ja": "ダウンロード中…"},
-    "set.furigana_download_failed": {"en": "Dictionary download failed", "zh-Hans": "词典下载失败",
-                                     "zh-Hant": "詞典下載失敗", "ja": "辞書のダウンロードに失敗"},
-    "set.furigana_download_hint": {"en": "Download the UniDic dictionary into the path above"
-                                          " (needed for mecab-based furigana).",
-                                   "zh-Hans": "将 UniDic 词典下载到上方路径（meCab 注音需要）。",
-                                   "zh-Hant": "將 UniDic 詞典下載到上方路徑（meCab 注音需要）。",
-                                   "ja": "UniDic 辞書を上のパスへダウンロードします（meCab 注音に必要）。"},
+    "set.furigana_download_hint": {"en": "Open the UniDic dictionary download in your browser"
+                                          " (save it, extract unidic_lite/dicdir into the path above).",
+                                   "zh-Hans": "在浏览器中打开 UniDic 词典下载页（保存后，把解压出来的 "
+                                              "unidic_lite/dicdir 放到上方路径）。",
+                                   "zh-Hant": "在瀏覽器中開啟 UniDic 詞典下載頁（儲存後，把解壓出的 "
+                                              "unidic_lite/dicdir 放到上方路徑）。",
+                                   "ja": "ブラウザで UniDic 辞書のダウンロードを開きます（保存後、解凍した "
+                                         "unidic_lite/dicdir を上のパスに置いてください）。"},
+    "set.furigana_download_browser_hint": {"en": "Click Download above, then extract unidic_lite/dicdir "
+                                                  "into the chosen path.",
+                                           "zh-Hans": "点击上方「下载」后在浏览器保存，然后把解压出的 "
+                                                      "unidic_lite/dicdir 放到所选路径。",
+                                           "zh-Hant": "點擊上方「下載」後在瀏覽器儲存，再把解壓出的 "
+                                                      "unidic_lite/dicdir 放到所選路徑。",
+                                           "ja": "上の「ダウンロード」をクリックしてブラウザで保存し、"
+                                                 "解凍した unidic_lite/dicdir を選択パスに置いてください。"},
     "set.furigana_browse_hint": {"en": "Choose a dictionary directory", "zh-Hans": "选择词典目录",
                                  "zh-Hant": "選擇詞典目錄", "ja": "辞書ディレクトリを選択"},
     "set.furigana_browse_title": {"en": "Select UniDic dictionary directory", "zh-Hans": "选择 UniDic 词典目录",
