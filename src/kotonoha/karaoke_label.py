@@ -449,7 +449,12 @@ class KaraokeLabel(QWidget):
             if not base or not kana:
                 continue
             x0 = text_left + self._fm.horizontalAdvance(text[: furi.pos])
-            w_base = max(1.0, float(self._fm.horizontalAdvance(base)))
+            if furi.span is not None:
+                # Non-contiguous base (繰り返す → 繰返): span the whole surface so the
+                # reading is centred over the entire verb, not the first kanji.
+                w_base = max(1.0, float(self._fm.horizontalAdvance(text[furi.pos : furi.pos + furi.span])))
+            else:
+                w_base = max(1.0, float(self._fm.horizontalAdvance(base)))
             w_kana = float(self._fm_ruby.horizontalAdvance(kana))
             center = x0 + w_base / 2.0
             kana_x = center - w_kana / 2.0

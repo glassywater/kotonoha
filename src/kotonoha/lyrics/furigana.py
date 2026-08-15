@@ -54,9 +54,13 @@ _UNIDIC_CANDIDATES = (
 
 @dataclass(frozen=True)
 class Furigana:
-    base: str  # 被注音的汉字串，如 "名前"
+    base: str  # 被注音的汉字串，如 "名前"；不连续时（如 繰り返す→繰返）为各汉字拼接
     kana: str  # 平假名读音，如 "なまえ"
     pos: int  # base 在整行文本 text 中的起始字符偏移（用于与主文本对齐）
+    # 渲染应覆盖的字符宽度。连续 base（名前）缺省 = len(base)；
+    # 不连续 base（繰り返す）时设为整个 surface 长度（含送假名），使全词读音
+    # 居中覆盖整个动词，而不是压在第一个汉字上。
+    span: int | None = None
 
 
 @dataclass(frozen=True)
@@ -420,19 +424,20 @@ def analyze(text: str) -> tuple[Furigana, ...]:
             if not kana:
                 continue
             pos = text.find(base, search_from)
+            span = None
             if pos < 0:
-                # base is not a contiguous substring of the line text. This happens
-                # when a kanji run is split by okurigana written in the lyric, e.g.
-                # 繰り返す → 繰 + り + 返 + す, so base="繰返" does not occur verbatim.
-                # A single block can't be positioned reliably then, and drawing the
-                # whole word reading over just the first kanji reads wrong (くりかえす
-                # pinned on 繰). Skip it rather than mis-annotate.
-                logger.debug(
-                    "Skipping furigana for %r: base %r not contiguous in %r", surface, base, text
-                )
-                continue
-            out.append(Furigana(base=base, kana=kana, pos=pos))
-            search_from = pos + len(base)
+                # base is not a contiguous substring of the line text (kanji run
+                # split by okurigana written in the lyric, e.g. 繰り返す → 繰+り+返+す,
+                # so base="繰返" never occurs verbatim). Locate the whole surface
+                # instead so the reading spans the whole verb, centred over it,
+                # rather than being mis-pinned onto the first kanji.
+                pos = text.find(surface, search_from)
+                if pos < 0:
+                    logger.debug("Skipping furigana for %r: not found in %r", surface, text)
+                    continue
+                span = len(surface)
+            out.append(Furigana(base=base, kana=kana, pos=pos, span=span))
+            search_from = pos + (span if span is not None else len(base))
         return tuple(out)
     except Exception:  # noqa: BLE001 - 任何分析异常都降级为无注音
         return ()
