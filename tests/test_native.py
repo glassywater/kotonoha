@@ -88,14 +88,60 @@ def test_older_bridge_without_probe_symbol_still_loads(stub_load):
     assert ctl.available is True
 
 
+def test_default_package_dir_prefers_the_loaded_source_dir(monkeypatch):
+    # Regression: default_package_dir used to fall back to the site-packages
+    # dir even when running from source, which could pick a stale RPM-installed
+    # bridge built against a different Qt minor (ABI mismatch, layer-shell dead).
+    # With PYTHONPATH=src the loaded package dir (*__file__).parent) holds the
+    # freshly built bridge, so it must win over installed_dir.
+    source_dir = str(Path(native.__file__).parent)
+
+    def _pick(pkg: Path | str) -> str | None:
+        if str(pkg) == source_dir:
+            return source_dir + "/libkoto-layer.so"
+        return None  # installed dir has no bridge
+
+    monkeypatch.setattr(native, "find_layer_shell_library", _pick)
+    assert native.default_package_dir() == source_dir
+
+
+def test_default_package_dir_falls_back_when_source_has_no_bridge(monkeypatch, tmp_path):
+    # If the loaded dir was, say, a bare checkout that hasn't built the bridge
+    # yet, keep the old behavior of looking at the installed site-packages copy.
+    source_dir = str(Path(native.__file__).parent)
+    platlib_root = str(tmp_path / "site-packages")
+    installed_dir = f"{platlib_root}/kotonoha"
+
+    def _pick(pkg: Path) -> str | None:
+        # Collapse both to strings for the value assertions below.
+        if str(pkg) != source_dir and str(pkg) == installed_dir:
+            return installed_dir + "/libkoto-layer.so"
+        return None
+
+    monkeypatch.setattr(native, "find_layer_shell_library", _pick)
+    # default_package_dir computes installed_dir = platlib / package_name.
+    monkeypatch.setattr(native.sysconfig, "get_path", lambda *a, **k: platlib_root)
+    assert native.default_package_dir() == installed_dir
+
+
 _REAL_BRIDGE = Path(native.__file__).parent / "libkoto-layer.so"
 
 
 @pytest.mark.skipif(not _REAL_BRIDGE.exists(), reason="native bridge not built")
 def test_load_real_bridge_declares_argtypes_and_handshake():
     # Integration: the actually-built .so loads, exposes the ABI symbols, and
-    # passes the Qt handshake against the running PyQt6 (same system Qt).
-    lib = LayerShellController._load(str(_REAL_BRIDGE))
+    # passes the Qt handshake against the running PyQt6.
+    try:
+        lib = LayerShellController._load(str(_REAL_BRIDGE))
+    except OSError as exc:
+        # A manually pip-installed PyQt6 (e.g. .venv-ruby) bundles libQt6Gui
+        # that lacks Qt_<ver>_PRIVATE_API, which the *system* LayerShellQt
+        # library dlopens; the loader then fails before our code runs. That is
+        # an environment mismatch, not a regression. A distro/uv install pairs
+        # one system Qt and passes. Skip so CI with a matching environment runs.
+        if "not found" in str(exc) and "PRIVATE_API" in str(exc):
+            pytest.skip("PyQt6's bundled Qt libs can't satisfy the system LayerShellQt (PyPI Qt mismatch)")
+        raise
     assert lib.make_overlay.argtypes is not None
     assert hasattr(lib, "koto_layer_qt_version")
     assert hasattr(lib, "koto_has_layer_shell")

@@ -150,6 +150,12 @@ class LayerShellController:
 
 def default_package_dir() -> str:
     source_dir = Path(__file__).parent
+    # The loaded package dir (__file__) is authoritative: with PYTHONPATH=src it is
+    # the source checkout with its freshly built bridge; installed it is the
+    # site-packages build. Prefer it so the .so matches this exact code/runtime —
+    # falling back to another dir could pick a stale, Qt-ABI-mismatched bridge.
+    if find_layer_shell_library(source_dir) is not None:
+        return str(source_dir)
     installed_dir = Path(sysconfig.get_path("platlib")) / source_dir.name
     if find_layer_shell_library(installed_dir) is not None:
         return str(installed_dir)
