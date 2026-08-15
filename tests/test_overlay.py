@@ -64,6 +64,61 @@ def test_font_fallback_chain_keeps_cjk_after_a_latin_family(qapp):
     qapp.processEvents()
 
 
+def test_fontconfig_prefer_rules_prefix_builtin_fallback(qapp):
+    """fontconfig's own sorted fallback chain (what crossfont calls font_sort)
+    should lead the built-in CJK safety net, so a user <alias>/<prefer> rule
+    (e.g. "CaskaydiaCove Nerd Font Mono" -> "霞鹜文楷 TC") is honoured instead of
+    being shadowed by the hardcoded list."""
+    from kotonoha.overlay import _fontconfig_fallback_families, _FALLBACK_FAMILIES
+
+    _fontconfig_fallback_families.cache_clear()
+    # Simulate fc-match -s: the chosen family first, then the user's preferred
+    # LXGW WenKai, then ordinary faces — before the built-in CJK chain would start.
+    fake_out = (
+        "CaskaydiaCove Nerd Font Mono\n"
+        "霞鹜文楷 TC,LXGW WenKai TC\n"
+        "Noto Sans\n"
+        "DejaVu Sans\n"
+    )
+    with patch("kotonoha.overlay.subprocess.run") as run:
+        run.return_value.stdout = fake_out
+        run.return_value.returncode = 0
+        overlay = LyricsOverlay(
+            LyricsState(), Config(font_family="CaskaydiaCove Nerd Font Mono"), UnavailableController()
+        )
+        families = overlay._font_families()
+
+    run.assert_called_once()
+    assert families[0] == "CaskaydiaCove Nerd Font Mono"
+    # The user's fontconfig <prefer> (LXGW) must be picked ahead of the built-in CJK net.
+    assert families.index("霞鹜文楷 TC") < min(
+        i for i, n in enumerate(families) if n in _FALLBACK_FAMILIES
+    )
+    # Only the canonical family name of each fc line is used, but the built-in
+    # safety net is still appended so tofu is avoided when fontconfig can't help.
+    assert "Noto Sans CJK SC" in families
+    assert "Noto Sans" in families
+    assert "LXGW WenKai TC" not in families  # an alias of 霞鹜文楷 TC, not a separate family
+    overlay.deleteLater()
+    qapp.processEvents()
+    _fontconfig_fallback_families.cache_clear()
+
+
+def test_fontconfig_unavailable_falls_back_to_builtin_chain(qapp):
+    """If fc-match is missing/fails, the built-in CJK chain still prevents tofu."""
+    from kotonoha.overlay import _fontconfig_fallback_families
+
+    _fontconfig_fallback_families.cache_clear()
+    with patch("kotonoha.overlay.subprocess.run", side_effect=OSError("no fc-match")):
+        overlay = LyricsOverlay(LyricsState(), Config(font_family="Inter"), UnavailableController())
+        families = overlay._font_families()
+    assert families[0] == "Inter"
+    assert any("CJK" in name for name in families)
+    overlay.deleteLater()
+    qapp.processEvents()
+    _fontconfig_fallback_families.cache_clear()
+
+
 def test_idle_shows_default_text_so_the_panel_is_not_empty(qapp):
     from kotonoha.model import EMPTY_SNAPSHOT
 

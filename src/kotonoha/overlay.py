@@ -10,7 +10,9 @@ smooth between probe heartbeats.
 from __future__ import annotations
 
 import logging
+import subprocess
 from dataclasses import replace
+from functools import lru_cache
 
 from PyQt6 import sip
 from PyQt6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer, pyqtSignal
@@ -41,12 +43,65 @@ RENDER_INTERVAL_MS = 16  # ~60fps
 CONTROL_ICON_COLOR = "#9AA0A6"  # soft grey so the lock/gear don't glare against the panel
 PILL_RADIUS = 16  # corner radius shared by the pill paint and the input region
 
-# Appended after the user's chosen family so a Latin-only font (e.g. Inter) still
-# renders CJK lyrics via Qt's per-glyph substitution instead of showing tofu.
+# Safety-net CJK/system chain appended after the chosen family and the
+# fontconfig-derived fallbacks, so a Latin-only pick (e.g. Inter) still renders
+# Chinese/Japanese/Korean via Qt's per-glyph substitution instead of tofu. This
+# only kicks in when fontconfig itself offers nothing usable for those codepoints.
 _FALLBACK_FAMILIES = (
     "Noto Sans CJK SC", "Noto Sans CJK JP", "Noto Sans CJK KR",
     "Source Han Sans SC", "Microsoft YaHei", "PingFang SC", "Segoe UI", "sans-serif",
 )
+
+# Families fontconfig commonly returns that are not useful text faces for the
+# overlay (colour emoji etc.) and would otherwise glue a useless entry into the
+# top of the fallback chain. "sans-serif"/"serif"/"monospace" are generic aliases
+# Qt resolves via its own fontconfig match, so we keep them at the very end.
+_SKIP_FALLBACK_NAMES = frozenset({"Noto Color Emoji", "Joypixels", "Twemoji", "Apple Color Emoji"})
+
+
+@lru_cache(maxsize=64)
+def _fontconfig_fallback_families(chosen: str) -> tuple[str, ...]:
+    """The ordered fallback chain fontconfig would give the chosen family.
+
+    This mirrors how Alacritty/crossfont resolves fonts: instead of hardcoding
+    its own CJK list, it builds a pattern from the requested family and asks
+    fontconfig to sort the candidates (``fc_sort``), so user ``<alias>/<prefer>``
+    rules are honoured. The kotonoha equivalent is ``fc-match -s '<family>'``,
+    whose output order is the same fontconfig sort. Feeding that order into
+    ``QFont.setFamilies`` makes a user's fontconfig preference (e.g. directing
+    "CaskaydiaCove Nerd Font Mono" to fall back to "霞鹜文楷 TC") take effect,
+    because Qt picks the first listed family that covers a glyph.
+    """
+    if not chosen:
+        return ()
+    try:
+        out = subprocess.run(
+            ["fc-match", "-s", "--format=%{family}\n", chosen],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        # fc-match missing or failing: fall back to the built-in CJK chain.
+        return ()
+    families: list[str] = []
+    generics: list[str] = []
+    for line in out.stdout.splitlines():
+        # Each line is the fontconfig-sorted face; its first name is the canonical
+        # family. Later aliases on the same line are just other names for the same
+        # face, so only the canonical name matters for Qt's first-covering-wins.
+        name = line.split(",")[0].strip()
+        if not name or name in _SKIP_FALLBACK_NAMES:
+            continue
+        if name in ("sans-serif", "serif", "monospace"):
+            # Keep generic aliases, but put them last (Qt resolves them fresh).
+            if name not in generics:
+                generics.append(name)
+            continue
+        if name not in families:
+            families.append(name)
+    return tuple(families + generics)
 
 
 CONTROL_BUTTON_STYLE = """
@@ -293,12 +348,16 @@ class LyricsOverlay(QWidget):
     # --- geometry (fixed-size, margin-positioned panel) ---
 
     def _font_families(self) -> list[str]:
-        """The chosen family first, then the CJK/system fallback chain, so a
-        Latin-only pick still renders Chinese/Japanese/Korean lyrics."""
+        """The chosen family first, then fontconfig's own fallback chain for it,
+        then the built-in CJK/system chain as a tofu safety net. Delegating the
+        fallback ordering to fontconfig — the same approach Alacritty/crossfont
+        uses with ``font_sort`` — lets a user's ``<alias>/<prefer>`` rules (e.g.
+        sending CJK glyphs to "霞鹜文楷 TC") actually take effect instead of being
+        shadowed by a hardcoded list."""
         chosen = self._config.font_family.split(",")[0].strip().strip("'\"")
-        families = [chosen] if chosen else []
-        for name in _FALLBACK_FAMILIES:
-            if name not in families:
+        families: list[str] = []
+        for name in (chosen, *_fontconfig_fallback_families(chosen), *_FALLBACK_FAMILIES):
+            if name and name not in families:
                 families.append(name)
         return families
 
