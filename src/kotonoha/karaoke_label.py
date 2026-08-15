@@ -26,6 +26,9 @@ from .model import LyricLine
 UNSUNG_COLOR = QColor(255, 255, 255, 95)
 SHADOW_COLOR = QColor(0, 0, 0, 170)
 SHADOW_OFFSET = 1.5
+# Minimum horizontal gap between adjacent furigana ruby blocks, so a long reading
+# (e.g. らいめい) never collides with the next kanji's ruby (e.g. くりかえす).
+FURIGANA_GAP = 4.0
 REVEAL_RISE_PX = 9.0
 REVEAL_DURATION_MS = 320
 # Line-change transition styles (chosen in Settings). "rise" is the calm default;
@@ -439,6 +442,7 @@ class KaraokeLabel(QWidget):
         text = self.text
         w_base_total = self._fm.horizontalAdvance(text) if text else 0.0
         rb = self._ruby_font
+        prev_kana_right: float | None = None  # right edge of the block drawn before
         for furi in self._furigana:
             base = furi.base
             kana = furi.kana
@@ -453,6 +457,13 @@ class KaraokeLabel(QWidget):
             # the base kanji, so clamp the ruby inside the label to keep it fully
             # visible instead of being clipped at an edge (both line-start and -end).
             kana_x = max(0.0, min(kana_x, max(0.0, float(self.width()) - w_kana)))
+            # Never let this block collide with the previous kanji's ruby. Push it
+            # right a little when the centred spot would overlap, so e.g. らいめい
+            # and くりかえす keep a readable gap between め and く.
+            if prev_kana_right is not None and kana_x < prev_kana_right + FURIGANA_GAP:
+                kana_x = prev_kana_right + FURIGANA_GAP
+                kana_x = min(kana_x, max(0.0, float(self.width()) - w_kana))
+            prev_kana_right = kana_x + w_kana
             # Ruby sits in the headroom reserved by _furigana_top (widget's top area);
             # the widget height already accounts for it via sizeHint, so y is near the
             # top, safely inside the widget and centred under the kanji above.

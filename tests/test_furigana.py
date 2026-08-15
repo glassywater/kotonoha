@@ -242,3 +242,52 @@ def test_config_furigana_default_and_roundtrip():
     assert data["furigana"] is False
     overridden = {**data, "furigana": True}
     assert Config.from_dict(overridden).furigana is True
+
+
+# --- chouon (長音符 ー) expansion ---
+
+
+@pytest.mark.parametrize(
+    "kana,expected",
+    [
+        ("らいめー", "らいめい"),   # 雷鳴 (UniDic 发音 ライメー -> 表记 らいめい)
+        ("きょー", "きょう"),        # 今日 (キョー -> きょう)
+        ("こどー", "こどう"),        # 鼓動 (コドー -> こどう)
+        ("とうきょー", "とうきょう"),  # 東京
+        ("なまえ", "なまえ"),       # no ー -> unchanged
+        ("だきしめ", "だきしめ"),    # no ー -> unchanged
+    ],
+)
+def test_expand_chouon(kana, expected):
+    assert furigana._expand_chouon(kana) == expected
+
+
+@pytest.mark.parametrize(
+    "raw_kana,base,expected_kana",
+    [
+        ("ライメー", "雷鳴", "らいめい"),
+        ("キョー", "今日", "きょう"),
+        ("コドー", "鼓動", "こどう"),
+    ],
+)
+def test_analyze_expands_chouon_for_kanji_readings(raw_kana, base, expected_kana):
+    # UniDic 第 2 列给出发音长音(ライメー);注音应显示表记(らいめい)。
+    _patch_backend([(base, raw_kana)])
+    res = furigana.analyze(base)
+    assert len(res) == 1
+    assert res[0].base == base
+    assert res[0].kana == expected_kana
+
+
+def test_furigana_renders_adjacent_blocks_without_collision(qapp):
+    # 雷鳴(らいめい) と 繰り返す(くりかえす) が隣接する実例:rendering 必須安全。
+    _patch_backend([("雷鳴", "ライメー"), ("を", "オ"), ("繰り返す", "クリカエス")])
+    label = _make_label(qapp, furigana=True)
+    text = "鼓動は雷鳴を繰り返す"
+    label.set_line(LyricLine(0, "c", 0.0, 9.0, text, "", ()), False)
+    combined = {f.base: f.kana for f in label._furigana}
+    assert combined["雷鳴"] == "らいめい"  # 長音符已展开为表记
+    assert combined["繰返"] == "くりかえす"
+    label.grab()  # paints through the (overlap-avoiding) ruby pass without raising
+    qapp.processEvents()
+
