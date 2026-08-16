@@ -122,6 +122,7 @@ class KotonohaTray(QSystemTrayIcon):
         passthrough: bool,
         on_toggle_passthrough: Callable[[bool], None],
         on_open_settings: Callable[[], None],
+        on_recenter: Callable[[], None],
         on_quit: Callable[[], None],
         request_players: Callable[[Callable[[list[tuple[str, str]]], None]], None]
         | None = None,
@@ -148,6 +149,10 @@ class KotonohaTray(QSystemTrayIcon):
         self._lock_action.setChecked(passthrough)
         self._lock_action.toggled.connect(on_toggle_passthrough)
         menu.addAction(self._lock_action)
+
+        recenter_action = QAction(t("tray.recenter"), menu)
+        recenter_action.triggered.connect(lambda: on_recenter())
+        menu.addAction(recenter_action)
 
         menu.addSeparator()
 

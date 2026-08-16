@@ -587,6 +587,34 @@ class LyricsOverlay(QWidget):
             geo = screen.geometry()
             self.move(geo.x() + self._layer_pos.x(), geo.y() + self._layer_pos.y())
 
+    def center_on_screen(self) -> None:
+        """Move the overlay to the centre of its target screen (both axes).
+
+        Also normalises the persisted position (margin_x=0, margin_edge to the
+        centred offset) so the next restart keeps it here instead of the old spot.
+        """
+        screen = self._target_screen()
+        if screen is None:
+            return
+        width, height = self._window_size()
+        geo = screen.geometry()
+        centered = QPoint((geo.width() - width) // 2, (geo.height() - height) // 2)
+        self._layer_pos = self._clamp_to_screen(
+            centered, screen=screen, width=width, height=height, allow_partial=False
+        )
+        if self._controller.available:
+            ptr = self._window_ptr()
+            if ptr is not None:
+                self._controller.set_anchor_position(ptr, self._layer_pos.x(), self._layer_pos.y())
+        else:
+            self.move(geo.x() + self._layer_pos.x(), geo.y() + self._layer_pos.y())
+        # Persist a centred placement so it survives restart.
+        self._config.margin_x = 0
+        if self._config.anchor_top:
+            self._config.margin_edge = max(0, self._layer_pos.y())
+        else:
+            self._config.margin_edge = max(0, geo.height() - height - self._layer_pos.y())
+
     def _bind_widget_screen(self, screen) -> None:
         if screen is None:
             return

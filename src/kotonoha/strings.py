@@ -33,6 +33,8 @@ STRINGS: dict[str, dict[str, str]] = {
     "tray.quit": {"en": "Quit", "zh-Hans": "退出", "zh-Hant": "結束", "ja": "終了"},
     "tray.select_player": {"en": "Player", "zh-Hans": "播放器", "zh-Hant": "播放器", "ja": "プレイヤー"},
     "tray.player_auto": {"en": "Auto", "zh-Hans": "自动", "zh-Hant": "自動", "ja": "自動"},
+    "tray.recenter": {"en": "Center on screen", "zh-Hans": "回到屏幕中间",
+                      "zh-Hant": "回到螢幕中間", "ja": "画面中央に戻す"},
 
     "overlay.locked": {"en": "Locked (click-through) — click to unlock & drag",
                        "zh-Hans": "已锁定（鼠标穿透）— 点击解锁可拖动",

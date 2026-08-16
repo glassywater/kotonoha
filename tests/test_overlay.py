@@ -592,3 +592,22 @@ def test_geometry_keeps_a_fully_visible_position(qapp):
     overlay.deleteLater()
     qapp.processEvents()
 
+
+
+def test_center_on_screen_places_overlay_in_the_middle(qapp):
+    screen = FakeScreen("DP-1", 0, 0, 1920, 1080)
+    overlay = LyricsOverlay(
+        LyricsState(), Config(anchor_top=True), UnavailableController()
+    )
+    overlay._layer_pos = QPoint(1500, 900)  # wherever it was dragged
+    with patch.object(overlay, "_window_size", return_value=(500, 140)), patch.object(
+        overlay, "_target_screen", return_value=screen
+    ), patch.object(overlay, "_bind_widget_screen", lambda _s, s=None: None):
+        overlay.center_on_screen()
+
+    assert overlay._layer_pos == QPoint((1920 - 500) // 2, (1080 - 140) // 2)
+    assert overlay._config.margin_x == 0  # centred -> no horizontal nudge
+    if overlay._config.anchor_top:
+        assert overlay._config.margin_edge == (1080 - 140) // 2
+    overlay.deleteLater()
+    qapp.processEvents()

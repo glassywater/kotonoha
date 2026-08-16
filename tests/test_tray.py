@@ -57,6 +57,7 @@ def test_tray_icon_can_switch_without_restart(qapp):
         passthrough=False,
         on_toggle_passthrough=lambda _checked: None,
         on_open_settings=lambda: None,
+        on_recenter=lambda: None,
         on_quit=lambda: None,
     )
     first_key = tray_icon.icon().cacheKey()

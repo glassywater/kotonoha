@@ -73,6 +73,7 @@ class AppController:
             passthrough=config.passthrough,
             on_toggle_passthrough=self._on_toggle_passthrough,
             on_open_settings=self._open_settings,
+            on_recenter=self.recenter_overlay,
             on_quit=self._app.quit,
             request_players=self.request_players,
             select_player=self.select_player,
@@ -124,6 +125,11 @@ class AppController:
         self._config.margin_edge = margin_edge
         self._config.margin_x = margin_x
         self._config.screen_name = screen_name
+        self._persist()
+
+    def recenter_overlay(self) -> None:
+        """Centre the overlay on its screen (tray menu action)."""
+        self._overlay.center_on_screen()
         self._persist()
 
     # --- settings ---
