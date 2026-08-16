@@ -588,12 +588,15 @@ class LyricsOverlay(QWidget):
             self.move(geo.x() + self._layer_pos.x(), geo.y() + self._layer_pos.y())
 
     def center_on_screen(self) -> None:
-        """Move the overlay to the centre of its target screen (both axes).
+        """Move the overlay to the centre of the primary display (both axes).
 
-        Also normalises the persisted position (margin_x=0, margin_edge to the
-        centred offset) so the next restart keeps it here instead of the old spot.
+        With multiple monitors this always targets the primary screen, not the one
+        the overlay was last dragged to. If the layer surface is currently bound to
+        another output it is recreated on the primary screen, otherwise repositioned
+        in place. Persisted placement is normalised (screen_name + margins) so a
+        restart opens centred there too.
         """
-        screen = self._target_screen()
+        screen = QApplication.primaryScreen() or self._target_screen()
         if screen is None:
             return
         width, height = self._window_size()
@@ -602,18 +605,24 @@ class LyricsOverlay(QWidget):
         self._layer_pos = self._clamp_to_screen(
             centered, screen=screen, width=width, height=height, allow_partial=False
         )
-        if self._controller.available:
-            ptr = self._window_ptr()
-            if ptr is not None:
-                self._controller.set_anchor_position(ptr, self._layer_pos.x(), self._layer_pos.y())
-        else:
-            self.move(geo.x() + self._layer_pos.x(), geo.y() + self._layer_pos.y())
-        # Persist a centred placement so it survives restart.
+        # Persist a centred placement on the primary screen.
+        self._config.screen_name = screen.name()
         self._config.margin_x = 0
         if self._config.anchor_top:
             self._config.margin_edge = max(0, self._layer_pos.y())
         else:
             self._config.margin_edge = max(0, geo.height() - height - self._layer_pos.y())
+        # A layer surface ties its output when created; moving onto another screen
+        # requires recreating it (it reuses the new _layer_pos). Otherwise just
+        # reposition.
+        if not self._same_screen(self._active_screen, screen):
+            self._recreate_layer_surface(screen)
+        elif self._controller.available:
+            ptr = self._window_ptr()
+            if ptr is not None:
+                self._controller.set_anchor_position(ptr, self._layer_pos.x(), self._layer_pos.y())
+        else:
+            self.move(geo.x() + self._layer_pos.x(), geo.y() + self._layer_pos.y())
 
     def _bind_widget_screen(self, screen) -> None:
         if screen is None:

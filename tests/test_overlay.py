@@ -594,20 +594,43 @@ def test_geometry_keeps_a_fully_visible_position(qapp):
 
 
 
-def test_center_on_screen_places_overlay_in_the_middle(qapp):
-    screen = FakeScreen("DP-1", 0, 0, 1920, 1080)
+def test_center_on_screen_places_overlay_in_the_primary_middle(qapp):
+    primary = FakeScreen("DP-1", 0, 0, 1920, 1080)
+    secondary = FakeScreen("HDMI-A-1", 0, 0, 2560, 1440)
     overlay = LyricsOverlay(
         LyricsState(), Config(anchor_top=True), UnavailableController()
     )
+    # Simulate the overlay currently bound to the secondary screen's output.
+    overlay._active_screen = secondary
     overlay._layer_pos = QPoint(1500, 900)  # wherever it was dragged
-    with patch.object(overlay, "_window_size", return_value=(500, 140)), patch.object(
-        overlay, "_target_screen", return_value=screen
-    ), patch.object(overlay, "_bind_widget_screen", lambda _s, s=None: None):
+    with patch.object(QApplication, "primaryScreen", return_value=primary), patch.object(
+        overlay, "_window_size", return_value=(500, 140)
+    ), patch.object(overlay, "_recreate_layer_surface") as recreate, patch.object(
+        overlay, "_bind_widget_screen", lambda _s, s=None: None
+    ):
         overlay.center_on_screen()
 
+    # Centred on the PRIMARY screen (not the one it was on).
     assert overlay._layer_pos == QPoint((1920 - 500) // 2, (1080 - 140) // 2)
-    assert overlay._config.margin_x == 0  # centred -> no horizontal nudge
-    if overlay._config.anchor_top:
-        assert overlay._config.margin_edge == (1080 - 140) // 2
+    assert overlay._config.screen_name == "DP-1"
+    assert overlay._config.margin_x == 0
+    assert recreate.call_args_list == [((primary,), {})]  # moved onto the primary
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def test_center_on_screen_when_already_on_primary_repositions_in_place(qapp):
+    primary = FakeScreen("DP-1", 0, 0, 1920, 1080)
+    overlay = LyricsOverlay(
+        LyricsState(), Config(anchor_top=True), UnavailableController()
+    )
+    overlay._active_screen = primary  # already bound to the primary output
+    with patch.object(QApplication, "primaryScreen", return_value=primary), patch.object(
+        overlay, "_window_size", return_value=(400, 120)
+    ), patch.object(overlay, "_recreate_layer_surface") as recreate:
+        overlay.center_on_screen()
+
+    assert overlay._layer_pos == QPoint((1920 - 400) // 2, (1080 - 120) // 2)
+    recreate.assert_not_called()
     overlay.deleteLater()
     qapp.processEvents()
