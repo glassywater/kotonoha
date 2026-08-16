@@ -135,7 +135,13 @@ jobs:
       - validate
       - version
     runs-on: ubuntu-latest
-    container: fedora:43
+    # Build on the target Fedora release so the bundled libkoto-layer.so is
+    # compiled against that release's Qt. A bridge built on an older Fedora (older
+    # Qt) fails the ABI handshake on a newer runtime ("bridge built against Qt
+    # X.Y, PyQt6 runtime is Qt X.Z"), silently disabling layer-shell (drag /
+    # center-on-screen). Match the release our RPM is aimed at (Fedora 44 / Qt
+    # 6.11). Keep in sync if the target release bumps.
+    container: fedora:44
     defaults:
       run:
         shell: bash
