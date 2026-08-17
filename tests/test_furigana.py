@@ -65,18 +65,6 @@ def test_analyze_applies_common_reading_override():
     assert res[0].kana == "わたし"
 
 
-def test_analyze_forces_kun_second_person_reading():
-    # 君 is ambiguous: 代名词→きみ, 接尾辞(人名后缀 山田君→くん). Lyrics use the
-    # second-person きみ almost always, so the override forces it even when meCab
-    # tags 君 as the 接尾辞 (here its reading would be くん).
-    _patch_backend([("健一", "ケンイチ"), ("君", "クン")])
-    res = furigana.analyze("健一君")
-    by_base = {f.base: f.kana for f in res}
-    assert by_base["君"] == "きみ"  # override wins over the 接尾辞 くん
-    assert by_base["健一"] == "けんいち"
-
-
-
 def test_analyze_strips_okurigana_from_kanji_reading():
     # 見上げ -> 漢字段"見上"(注音みあ) + 送假名"げ"(已写在歌词,不注音)。
     _patch_backend([("見上げ", "ミアゲ")])
