@@ -41,6 +41,10 @@ _KATA_TO_HIRA_DELTA = 0x30A1 - 0x3041  # ァ(30A1) -> ぁ(3041)
 # 只放几乎无歧义、歌词高频的少数项；key 是汉字段拼写，value 是平假名。
 _READING_OVERRIDES: dict[str, str] = {
     "私": "わたし",  # UniDic 字典音 わたくし；歌词几乎都用 わたし
+    # 君 is ambiguous in UniDic: 代名词(你)→きみ vs 接尾词(人名后缀, 山田君→くん).
+    # In lyrics 君 is almost always the second-person pronoun きみ; force that so
+    # a meCab 接尾辞 tagging (which would emit くん) never leaks into a lyric.
+    "君": "きみ",
 }
 
 # 用户放置 UniDic 词典的候选位置（按优先级）。下载 unidic-lite 后把其 dicdir 放到
