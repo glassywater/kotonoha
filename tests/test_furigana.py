@@ -314,3 +314,49 @@ def test_analyze_spans_non_contiguous_base_over_the_whole_surface():
     assert by_base["繰返"].span == 4
     assert by_base["明日"].span is None  # 連続 base は nullptr(既定=len(base))
 
+
+def test_isolate_japanese_replaces_non_japanese_with_spaces():
+    # ASCII(英字/数字/半角标点/空格)一律替换为空格;日文假名/汉字/全角标点保留。
+    # 长度与原文本 1:1(逐字符映射),便于 meCab 只看日文片段。
+    src = "Rainy proof 君が望んだままに"
+    isolated = furigana._isolate_japanese(src)
+    expected = "".join(" " if ord(c) <= 0x7F else c for c in src)
+    assert isolated == expected
+    assert len(isolated) == len(src)
+    # 片假名人名(ジョン)是日文字符,保留不被替换。
+    assert furigana._isolate_japanese("ジョン君") == "ジョン君"
+    # 数字同样被替换为空格(逐字符:3→空格,原有空格仍为空格)。
+    mixed_src = "君の名は 3月"
+    mixed = furigana._isolate_japanese(mixed_src)
+    assert mixed == "".join(" " if ord(c) <= 0x7F else c for c in mixed_src)
+
+def test_analyze_passes_isolated_text_to_backend():
+    # analyze 分词前把非日文字符隔离为空格再交给 backend —— 这样 meCab 不会被
+    # 前后英文诱导,把「君」误判成接尾辞(くん)。这里捕获 backend 收到的文本。
+    captured = {}
+
+    def capturing_backend(text):
+        captured["text"] = text
+        return [_Token(surface="君", kana="キミ")]
+
+    furigana._backend = capturing_backend
+    furigana._backend_state = 1
+    furigana.analyze.cache_clear()
+    res = furigana.analyze("Rainy proof 君が望んだままに")
+    # backend 收到的是隔离后的文本(英文→空格,君 前无英文)。
+    src = "Rainy proof 君が望んだままに"
+    assert captured["text"] == "".join(" " if ord(c) <= 0x7F else c for c in src)
+    # 「君」被当作代名词きみ,而非接尾辞くん。
+    assert len(res) == 1
+    assert res[0].base == "君"
+    assert res[0].kana == "きみ"
+
+
+def test_isolate_keeps_name_suffix_and_second_person_readings():
+    # 隔离英文后,真正的片假名人名+君 仍会按 meCab 的原始判断注くん —— 这里用真实
+    # token 模拟 meCab 行为:ジョン君→接尾辞くん,君が→代名词きみ。
+    # (注:隔离的是英文;片假名ジョン保留,故 meCab 仍判接尾辞。)
+    _patch_backend([("ジョン", "ジョン"), ("君", "クン")])
+    res = furigana.analyze("ジョン君")
+    assert {f.base: f.kana for f in res}["君"] == "くん"
+

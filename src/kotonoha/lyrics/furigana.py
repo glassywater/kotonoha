@@ -75,6 +75,27 @@ def _kata_to_hira(text: str) -> str:
     )
 
 
+def _is_japanese_char(ch: str) -> bool:
+    """A hiragana/katakana/kanji or Japanese/CJK punctuation glyph (non-ASCII),
+    i.e. a character meCab may legitimately tokenise. ASCII letters/digits/punct
+    are NOT included."""
+    return ord(ch) > 0x7F
+
+
+def _isolate_japanese(text: str) -> str:
+    """Replace non-Japanese characters (Latin, digits, ASCII punctuation, spaces)
+    with spaces, keeping length 1:1 with ``text``.
+
+    meCab is context-sensitive: a Latin/foreign noun immediately before 君 biases
+    its POS tag to the 接尾辞 (name suffix) reading くん even when the lyric means
+    the second-person あなた・きみ (e.g. "Rainy proof 君が望んだままに" → 雷鳴… 君
+    tagged 接尾辞). Tokenising a lyric stripped of its Latin/ASCII lets meCab see
+    only the Japanese, so that 君 tags 代名词/きみ, while genuine 人名＋君 cases
+    (e.g. ジョン君 → くん) still tag 接尾辞 as before.
+    """
+    return "".join(ch if _is_japanese_char(ch) else " " for ch in text)
+
+
 # 长音符「ー」按前一个假名的「段」展开为对应假名里的长元音表记：
 #   あ段→あ, い段→い, え段→い, う段→う, お段→う
 #   拗音小假名：ゃ→あ, ゅ→う, ょ→う（きょー→きょう、しゅー→しゅう）
@@ -406,8 +427,10 @@ def analyze(text: str) -> tuple[Furigana, ...]:
     """对一行文本做注音分析，返回 Furigana 元组（可能为空）。
 
     仅处理含汉字的词；纯假名/片假名/ASCII 词不注音。分析失败时返回空元组。
+    分词前先把非日文字符隔离为空格（见 ``_isolate_japanese``），避免前后英文
+    单词干扰 meCab 对 君 等字的词性判断。
     """
-    tokens = _words(text)
+    tokens = _words(_isolate_japanese(text))
     if not tokens:
         return ()
     try:
