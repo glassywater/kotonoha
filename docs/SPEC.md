@@ -25,7 +25,8 @@
 
 - **Async-first**：接收服务、状态轮询、网络 I/O 全部 `async`；只有 Qt widget 边界是同步的。
 - 用 `qasync` 把 asyncio 事件循环并入 Qt 事件循环。
-- Python 3.10+，Ruff 120 列，公共函数加类型注解，结构化数据用 `dataclass`。
+- Python 3.13+ 为开发目标；3.11 与 3.12 目前可用且过 CI，但不作保证。Ruff 120 列，
+  公共函数加类型注解，结构化数据用 `dataclass`。
 - 捕获**窄**异常并带上下文，避免裸 `except Exception`（仅日志边界例外）。
 
 ---
@@ -145,7 +146,10 @@ src/kotonoha/
 ├── __main__.py
 ├── main.py                  # entry_point: 装配 QApplication + qasync 事件循环
 ├── config.py                # 读写 ~/.config/kotonoha/config.json（XDG）
-├── lyrics_loader.py         # layer-shell .so 定位/加载/降级判定（移植 layer_shell_loader.py）
+├── platform/                # 平台判定归属处（Issue #16 的分层约束）
+│   ├── detect.py            # layer-shell .so 定位/降级判定（原 lyrics_loader.py）
+│   ├── native.py            # libkoto-layer.so 的 ctypes 包装
+│   └── overlay_contracts.py # 能力值对象与工具无关的窗口契约
 ├── layer_shell_bridge.cpp   # C++ 桥（移植自 bilihud，改 scope="kotonoha"）
 ├── build_bridge.sh          # 构建脚本（移植；产物 libkoto-layer.so）
 ├── model.py                 # 上述 dataclass + payload 解析（纯函数，易测）
@@ -159,7 +163,7 @@ src/kotonoha/
     └── icon.png
 ```
 
-**可测试性**：`model.py`（解析）、`lyrics_loader.py`（降级判定）、`state.py`（信号语义）做成纯逻辑、不依赖显示，可在无 GUI 的 CI 里跑（与 BiliHUD 的 `test_danmaku_format.py` / `test_layer_shell_loader.py` 同思路）。
+**可测试性**：`model.py`（解析）、`platform/detect.py`（降级判定）、`state.py`（信号语义）做成纯逻辑、不依赖显示，可在无 GUI 的 CI 里跑（与 BiliHUD 的 `test_danmaku_format.py` / `test_layer_shell_loader.py` 同思路）。
 
 ---
 
@@ -322,7 +326,7 @@ dependencies = ["PyQt6", "qasync", "aiohttp"]
 沿用 BiliHUD 的"纯逻辑可测"策略，放在 `tests/`：
 
 - `test_model.py`：payload → `LyricsSnapshot` 解析（含字段缺失、`timing != Word`、空 words、脏数据）。
-- `test_lyrics_loader.py`：`should_disable_layer_shell` / `find_layer_shell_library` 降级判定（移植 BiliHUD 同名测试）。
+- `test_platform_detect.py`：`should_disable_layer_shell` / `find_layer_shell_library` 降级判定（移植 BiliHUD 同名测试）。
 - `test_receiver.py`：用 `aiohttp` 测试客户端 POST 一个 payload，断言 state 收到对应快照、返回 204。
 - `test_state.py`：信号在快照变化时发射、相同快照不重复发射的语义。
 - `test_karaoke.py`：给定 `current_time` 和 words，计算"已唱进度/当前词索引/词内进度"的纯函数正确（高亮渲染的算术部分抽成纯函数测）。
@@ -333,7 +337,7 @@ GUI 渲染本身不在 CI 跑（无显示环境），逻辑全部下沉到纯函
 
 ## 13. 实施里程碑
 
-1. **M0 — 项目脚手架对齐**：升级 `pyproject.toml`（build hook + 依赖）、建包结构、移植 `build_bridge.sh` + `layer_shell_bridge.cpp`（改 scope/产物名）、`lyrics_loader.py` + 测试。
+1. **M0 — 项目脚手架对齐**：升级 `pyproject.toml`（build hook + 依赖）、建包结构、移植 `build_bridge.sh` + `layer_shell_bridge.cpp`（改 scope/产物名）、`platform/detect.py` + 测试。
 2. **M1 — 数据链路打通（WS）**：`model.py` 解析 + `state.py` + `receiver.py`（aiohttp WS 服务端）；**改造探针 `main.ts` 为 WS 客户端**（连接/全量同步/心跳/退避重连）；端到端 smoke：探针推送能进 state（先 print，不画 UI）。
 3. **M2 — 透明浮窗**：`overlay.py` 基础透明窗 + layer-shell 激活 + 默认穿透 + **顶部居中**；显示"当前行整行"。
 4. **M3 — 逐字卡拉 OK + 现代样式**：`karaoke_label.py` 扫光高亮、三行布局、翻译行、阴影/发光、切行动画。

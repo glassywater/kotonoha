@@ -7,9 +7,31 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from ..lyrics.match import TrackMetadata
+from ..lyrics.match import TrackMetadata, clean_title, recover_artist
 
 _MAX_TRACK_LENGTH_S = 24 * 60 * 60
+_LYRICS_LOOKUP_MAX_LENGTH_S = 2 * 60 * 60
+
+_NON_SONG_TITLE_MARKERS = (
+    "complete performance",
+    "official playlist",
+    "online concert",
+    "study with",
+    "pet therapy",
+    "music for pets",
+    "一小時",
+    "一小时",
+    "合輯",
+    "合集",
+    "串燒",
+    "精选",
+    "精選",
+    "演唱會",
+    "オンラインコンサート",
+    "完整演出",
+    "單曲循環",
+    "单曲循环",
+)
 
 # Chrome's own MPRIS bridge prefixes the tab's unread-notification count and
 # appends the site name to the page title, e.g. "(3) Song - YouTube". Both are
@@ -21,9 +43,20 @@ _TITLE_BADGE_PREFIX = re.compile(r"^\(\d+\)\s+")
 _TITLE_SITE_SUFFIX = re.compile(r"\s*[-|–—]\s*YouTube(?:\s+Music)?\s*$", re.IGNORECASE)
 
 
-def _clean_title(title: str) -> str:
+def _clean_title(title: str, artist: str = "") -> str:
     cleaned = _TITLE_BADGE_PREFIX.sub("", title)
     cleaned = _TITLE_SITE_SUFFIX.sub("", cleaned)
+    if artist and artist.casefold() in cleaned.casefold():
+        artist_start = cleaned.casefold().find(artist.casefold())
+        if artist_start > 0:
+            before = cleaned[:artist_start].rstrip()
+            remainder = cleaned[artist_start + len(artist) :]
+            if remainder.lstrip().startswith(("-", "–", "—", "－")):
+                trailing = remainder.lstrip(" \t\r\n-–—－")
+                cleaned = artist if before.endswith(("-", "–", "—", "－")) and trailing else trailing
+    cleaned = clean_title(cleaned, artist)
+    cleaned = re.sub(r"『[^』]*動態歌詞[^』]*』", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"『[^』]*歌词[^』]*』", "", cleaned, flags=re.IGNORECASE)
     # Never strip a title down to nothing (a page literally titled "YouTube").
     return cleaned.strip() or title.strip()
 
@@ -48,6 +81,26 @@ def _length_seconds(value: Any) -> float | None:
     return length_s
 
 
+def lyrics_lookup_reason(track: TrackInfo) -> str | None:
+    """Return why lyrics should be skipped, or ``None`` when lookup is worthwhile."""
+    if track.length_s is not None and track.length_s > _LYRICS_LOOKUP_MAX_LENGTH_S:
+        return f"duration {track.length_s:.0f}s is longer than a normal song"
+
+    title = (track.reported_title or track.title).casefold()
+    for marker in _NON_SONG_TITLE_MARKERS:
+        if marker.casefold() in title:
+            return f"title contains non-song marker {marker!r}"
+
+    # Counted on the same text the marker was found in. Counting words on the
+    # cleaned title instead let "春天里 | 晴天 | 走马 Remix" through: cleaning keeps
+    # only the first song, so the evidence of a medley was gone by then.
+    words = (track.reported_title or track.title).split()
+    if "remix" in title and len(words) >= 4 and sum(any("一" <= char <= "鿿" for char in word) for word in words) >= 3:
+        return "title combines several song names"
+
+    return None
+
+
 @dataclass(frozen=True)
 class TrackInfo:
     title: str
@@ -55,6 +108,13 @@ class TrackInfo:
     album: str
     length_s: float | None
     track_id: str
+    # What the player actually reported, before the upload grammar was stripped.
+    # The non-song gate reads this: "is this a song at all" is a question about
+    # the upload, and the markers that answer it (一小時, 串燒, KTV必唱) are the
+    # very text the title cleaner removes. Defaults to the cleaned title so a
+    # hand-built TrackInfo keeps the old behaviour.
+    reported_title: str = ""
+    url: str = ""
 
     def metadata(self) -> TrackMetadata:
         return TrackMetadata(self.title, self.artist, self.album, self.length_s)
@@ -66,12 +126,16 @@ class TrackInfo:
 
 def parse_metadata(raw: dict[str, Any]) -> TrackInfo:
     length_s = _length_seconds(raw.get("mpris:length"))
+    reported = _as_text(raw.get("xesam:title"))
+    artist = recover_artist(reported, _as_text(raw.get("xesam:artist")))
     return TrackInfo(
-        title=_clean_title(_as_text(raw.get("xesam:title"))),
-        artist=_as_text(raw.get("xesam:artist")),
+        title=_clean_title(reported, artist),
+        artist=artist,
         album=_as_text(raw.get("xesam:album")),
         length_s=length_s,
         track_id=str(raw.get("mpris:trackid") or ""),
+        reported_title=reported,
+        url=_as_text(raw.get("xesam:url")),
     )
 
 
@@ -92,6 +156,7 @@ class TrackObservation:
     playback_status: str
     position_s: float | None
     observed_at: float
+    player_identity: str = ""
 
 
 @dataclass(frozen=True)
@@ -105,6 +170,7 @@ class TrackCommit:
     # realigns the position with the (0-based) lyric timestamps. ~0 for normal
     # players, so it is a no-op there. None on the first track (join point unknown).
     start_position: float | None = None
+    player_identity: str = ""
 
 
 class TrackStabilizer:
@@ -167,7 +233,7 @@ class TrackStabilizer:
         self._committed_key = key
         self._generation += 1
         self._transitioning = False
-        return TrackCommit(self._generation, observation.player_name, info, start_position)
+        return TrackCommit(self._generation, observation.player_name, info, start_position, observation.player_identity)
 
     @property
     def transitioning(self) -> bool:

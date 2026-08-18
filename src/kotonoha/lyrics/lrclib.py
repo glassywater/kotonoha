@@ -128,7 +128,7 @@ async def fetch_artifact(
                 try:
                     records.extend(task.result())
                     successful_requests += 1
-                except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+                except (TimeoutError, aiohttp.ClientError, ValueError) as exc:
                     errors.append(exc)
                     logger.debug("LRCLIB %s lookup failed: %s: %s", stage, type(exc).__name__, exc)
 

@@ -366,7 +366,7 @@ jobs:
 
           from PyQt6 import QtCore, QtGui
           import kotonoha
-          from kotonoha.lyrics_loader import find_layer_shell_library
+          from kotonoha.platform.detect import find_layer_shell_library
 
           assert QtCore is not None
           assert QtGui is not None

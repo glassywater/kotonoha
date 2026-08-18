@@ -21,7 +21,7 @@ CONFIG_FILE_NAME = "config.json"
 
 # Lyric sources in priority order; first one with lyrics for the song wins.
 # "cider" = the Apple Music lyrics the Cider probe pushes over WebSocket.
-VALID_LYRICS_SOURCES = ("netease", "lrclib", "kugou", "cider")
+VALID_LYRICS_SOURCES = ("netease", "lrclib", "kugou", "qqmusic", "cider")
 DEFAULT_LYRICS_SOURCES = ["netease", "lrclib", "kugou", "cider"]
 
 # Accent presets: (key, start, end, sweep). The key is translated in the UI
@@ -37,6 +37,8 @@ ACCENT_PRESETS: tuple[tuple[str, str, str, str], ...] = (
 )
 
 DEFAULT_ICON_NAME = "default"
+TRACK_OFFSET_CAP = 100
+TRACK_OFFSET_STEP_MS = 50
 
 
 @dataclass
@@ -48,6 +50,12 @@ class Config:
     margin_edge: int = 64            # distance from the anchored edge (px)
     margin_x: int = 0                # horizontal nudge (px)
     screen_name: str = ""            # Qt output name; empty means choose the current/primary screen
+    # Size of the output the offsets above were measured against. 0 means unknown
+    # (a config from before this field, or one never dragged). A saved offset is
+    # only meaningful on the geometry it was taken on, so this is what tells a
+    # deliberate edge park apart from an offset stranded by a resolution change.
+    screen_width: int = 0
+    screen_height: int = 0
     # Typography / appearance
     font_family: str = "Inter, 'Segoe UI', 'Microsoft YaHei', sans-serif"
     font_style: str = "Regular"     # named style/weight for the family (e.g. "Bold", "Light Italic")
@@ -66,16 +74,18 @@ class Config:
     passthrough: bool = False        # start unlocked (interactive) so first-run positioning is easy
     karaoke: bool = True             # per-word sweep when timing == "Word"
     lead_ms: int = 120               # advance the sweep by this many ms (compensate pipeline latency)
+    track_offsets: dict[str, int] = field(default_factory=dict)
     show_translation: bool = True    # bilingual
     current_line_only: bool = False  # hide the previous and next context lines
     translation_language: str = "auto"  # "auto" -> from system locale, else an Apple tag (zh-Hans/en/ja/...)
     lyrics_sources: list[str] = field(default_factory=lambda: list(DEFAULT_LYRICS_SOURCES))
+    player_lock: str = ""
     prefer_best_lyrics: bool = True  # query sources concurrently and pick the best-quality match
     fuzzy_match: bool = True          # salvage noisy browser titles (strip 【HD】/[歌詞]/channel tails)
     cache_enabled: bool = True
     ui_language: str = "auto"        # UI language: "auto" -> system locale, else zh-Hans/zh-Hant/ja/en
     theme: str = "auto"              # settings-window theme: "auto" (follow system) | "light" | "dark"
-    frost_window: bool = True        # frosted-glass settings window (KDE Wayland only)
+    frost_window: bool = True        # frosted-glass settings window (needs a blur-capable compositor)
     settings_opacity: float = 0.95   # settings-window opacity 0.0..1.0 (a touch see-through by default)
     lyrics_script: str = "off"       # display-convert lyrics: "off" | "zh-Hans" | "zh-Hant"
     # Pink accent (sung text gradient + sweep highlight)
@@ -101,6 +111,8 @@ class Config:
             margin_edge=_clamp_int(self.margin_edge, 0, 4000, 64),
             margin_x=_clamp_int(self.margin_x, -4000, 4000, 0),
             screen_name=str(self.screen_name),
+            screen_width=_clamp_int(self.screen_width, 0, 65535, 0),
+            screen_height=_clamp_int(self.screen_height, 0, 65535, 0),
             font_family=str(self.font_family),
             font_style=str(self.font_style),
             # All three ranges match the Appearance spin boxes (8..120), so opening
@@ -119,6 +131,7 @@ class Config:
             passthrough=bool(self.passthrough),
             karaoke=bool(self.karaoke),
             lead_ms=_clamp_int(self.lead_ms, -2000, 2000, 120),
+            track_offsets=_clean_track_offsets(self.track_offsets),
             show_translation=bool(self.show_translation),
             current_line_only=bool(self.current_line_only),
             translation_language=str(self.translation_language),
@@ -132,6 +145,7 @@ class Config:
             fx_intensity=self.fx_intensity if self.fx_intensity in ("subtle", "expressive") else "subtle",
             furigana=bool(self.furigana),
             lyrics_sources=_clean_sources(self.lyrics_sources),
+            player_lock=self.player_lock if isinstance(self.player_lock, str) else "",
             prefer_best_lyrics=bool(self.prefer_best_lyrics),
             fuzzy_match=bool(self.fuzzy_match),
             cache_enabled=bool(self.cache_enabled),
@@ -212,6 +226,31 @@ def _clean_icon_name(value: Any) -> str:
     if not isinstance(value, str) or not value or value == DEFAULT_ICON_NAME:
         return DEFAULT_ICON_NAME
     return value if Path(value).name == value else DEFAULT_ICON_NAME
+
+
+def _clean_track_offsets(value: Any) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    cleaned: dict[str, int] = {}
+    for key, offset in value.items():
+        if isinstance(key, str) and key:
+            cleaned[key] = _clamp_int(offset, -10_000, 10_000, 0)
+    return dict(list(cleaned.items())[-TRACK_OFFSET_CAP:])
+
+
+def track_identity_key(title: str, artist: str, duration_s: float | None = None) -> str:
+    del duration_s  # Source-specific duration reporting must not split one recording's key.
+    return "\x1f".join((title.strip().casefold(), artist.strip().casefold()))
+
+
+def set_track_offset(config: Config, key: str, offset_ms: int) -> int:
+    """Store a recent track offset and return its clamped value."""
+    offset = _clamp_int(offset_ms, -10_000, 10_000, 0)
+    config.track_offsets.pop(key, None)
+    config.track_offsets[key] = offset
+    while len(config.track_offsets) > TRACK_OFFSET_CAP:
+        config.track_offsets.pop(next(iter(config.track_offsets)))
+    return offset
 
 
 def _clamp_float(value: Any, low: float, high: float, default: float) -> float:

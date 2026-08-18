@@ -1,7 +1,7 @@
 import sysconfig
 
-import kotonoha.native as native
-from kotonoha.lyrics_loader import (
+import kotonoha.platform.native as native
+from kotonoha.platform.detect import (
     find_layer_shell_library,
     overlay_mode_available,
     should_disable_layer_shell,
@@ -63,3 +63,31 @@ def test_overlay_mode_available_with_layer_shell():
 
 def test_overlay_mode_available_on_x11_without_layer_shell():
     assert overlay_mode_available("xcb", has_layer_shell=False, layer_shell_disabled=False) is True
+
+
+def test_current_desktop_reads_the_session_environment(monkeypatch):
+    from kotonoha.platform.detect import current_desktop
+
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "KDE:KWin")
+    assert current_desktop() == "KDE:KWin"
+
+
+def test_current_desktop_defaults_to_empty(monkeypatch):
+    from kotonoha.platform.detect import current_desktop
+
+    monkeypatch.delenv("XDG_CURRENT_DESKTOP", raising=False)
+    assert current_desktop() == ""
+
+
+def test_session_desktop_reads_the_session_environment(monkeypatch):
+    from kotonoha.platform.detect import session_desktop
+
+    monkeypatch.setenv("XDG_SESSION_DESKTOP", "niri")
+    assert session_desktop() == "niri"
+
+
+def test_session_desktop_defaults_to_empty(monkeypatch):
+    from kotonoha.platform.detect import session_desktop
+
+    monkeypatch.delenv("XDG_SESSION_DESKTOP", raising=False)
+    assert session_desktop() == ""

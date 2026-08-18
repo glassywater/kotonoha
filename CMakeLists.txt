@@ -11,17 +11,20 @@ find_package(Qt6GuiPrivate REQUIRED)
 find_package(LayerShellQt CONFIG REQUIRED)
 pkg_check_modules(WaylandClient REQUIRED IMPORTED_TARGET wayland-client)
 
-# KWin blur protocol (frosted-glass panel). The client bindings are generated
-# from a vendored protocol XML, so no plasma-wayland-protocols dependency is
-# needed. Rather than silently degrade when wayland-scanner is missing (an
-# "automagic" dependency — the feature's presence would depend on the build host,
-# which distro packagers rightly reject), this is an explicit option that hard-
-# errors when requested without the tool. It defaults ON: the build already
-# hard-requires the wayland-client dev package (below), which ships
+# Background-blur protocols (frosted-glass panel). Two are generated: the
+# cross-desktop ext-background-effect-v1 (MIT), which KWin 6.7+ and Mutter
+# implement, and the KDE-private org_kde_kwin_blur (LGPL-2.1+) it replaced, still
+# the only one Plasma <= 6.6 speaks. The client bindings are generated from
+# vendored protocol XML, so neither wayland-protocols nor plasma-wayland-protocols
+# is a build dependency. Rather than silently degrade when wayland-scanner is
+# missing (an "automagic" dependency — the feature's presence would depend on the
+# build host, which distro packagers rightly reject), this is an explicit option
+# that hard-errors when requested without the tool. It defaults ON: the build
+# already hard-requires the wayland-client dev package (below), which ships
 # wayland-scanner, so ON adds no real dependency. Packagers who want it off pass
 # -DKOTONOHA_ENABLE_BLUR=OFF (blur then compiles to a no-op; the translucent
 # fill still renders, just unblurred).
-option(KOTONOHA_ENABLE_BLUR "Compile KWin org_kde_kwin_blur support (LGPL-2.1+)" ON)
+option(KOTONOHA_ENABLE_BLUR "Compile background-blur support (MIT / LGPL-2.1+)" ON)
 set(KOTONOHA_BLUR_SOURCES "")
 if(KOTONOHA_ENABLE_BLUR)
   find_program(WAYLAND_SCANNER wayland-scanner)
@@ -30,22 +33,24 @@ if(KOTONOHA_ENABLE_BLUR)
       "KOTONOHA_ENABLE_BLUR=ON requires wayland-scanner (dev-util/wayland-scanner). "
       "Pass -DKOTONOHA_ENABLE_BLUR=OFF to build without frosted-glass blur.")
   endif()
-  set(KOTONOHA_BLUR_XML "${CMAKE_CURRENT_SOURCE_DIR}/src/kotonoha/protocols/blur.xml")
-  set(KOTONOHA_BLUR_HEADER "${CMAKE_CURRENT_BINARY_DIR}/blur-client-protocol.h")
-  set(KOTONOHA_BLUR_CODE "${CMAKE_CURRENT_BINARY_DIR}/blur-protocol.c")
-  add_custom_command(
-    OUTPUT "${KOTONOHA_BLUR_HEADER}"
-    COMMAND "${WAYLAND_SCANNER}" client-header "${KOTONOHA_BLUR_XML}" "${KOTONOHA_BLUR_HEADER}"
-    DEPENDS "${KOTONOHA_BLUR_XML}"
-    VERBATIM
-  )
-  add_custom_command(
-    OUTPUT "${KOTONOHA_BLUR_CODE}"
-    COMMAND "${WAYLAND_SCANNER}" private-code "${KOTONOHA_BLUR_XML}" "${KOTONOHA_BLUR_CODE}"
-    DEPENDS "${KOTONOHA_BLUR_XML}"
-    VERBATIM
-  )
-  set(KOTONOHA_BLUR_SOURCES "${KOTONOHA_BLUR_HEADER}" "${KOTONOHA_BLUR_CODE}")
+  foreach(KOTONOHA_PROTOCOL IN ITEMS blur ext-background-effect-v1)
+    set(KOTONOHA_PROTOCOL_XML "${CMAKE_CURRENT_SOURCE_DIR}/src/kotonoha/protocols/${KOTONOHA_PROTOCOL}.xml")
+    set(KOTONOHA_PROTOCOL_HEADER "${CMAKE_CURRENT_BINARY_DIR}/${KOTONOHA_PROTOCOL}-client-protocol.h")
+    set(KOTONOHA_PROTOCOL_CODE "${CMAKE_CURRENT_BINARY_DIR}/${KOTONOHA_PROTOCOL}-protocol.c")
+    add_custom_command(
+      OUTPUT "${KOTONOHA_PROTOCOL_HEADER}"
+      COMMAND "${WAYLAND_SCANNER}" client-header "${KOTONOHA_PROTOCOL_XML}" "${KOTONOHA_PROTOCOL_HEADER}"
+      DEPENDS "${KOTONOHA_PROTOCOL_XML}"
+      VERBATIM
+    )
+    add_custom_command(
+      OUTPUT "${KOTONOHA_PROTOCOL_CODE}"
+      COMMAND "${WAYLAND_SCANNER}" private-code "${KOTONOHA_PROTOCOL_XML}" "${KOTONOHA_PROTOCOL_CODE}"
+      DEPENDS "${KOTONOHA_PROTOCOL_XML}"
+      VERBATIM
+    )
+    list(APPEND KOTONOHA_BLUR_SOURCES "${KOTONOHA_PROTOCOL_HEADER}" "${KOTONOHA_PROTOCOL_CODE}")
+  endforeach()
 endif()
 
 execute_process(

@@ -1,3 +1,5 @@
+from fixtures.mpris_titles import MPRIS_TITLE_CASES
+
 from kotonoha.providers.mpris import (
     TrackInfo,
     TrackObservation,
@@ -5,6 +7,7 @@ from kotonoha.providers.mpris import (
     _unwrap,
     parse_metadata,
 )
+from kotonoha.providers.mpris_track import lyrics_lookup_reason
 
 
 def observation(track_id, title, artist, *, at, duration=180.0, pos=0.0):
@@ -50,6 +53,7 @@ def test_parse_basic():
             "xesam:album": "Your Name",
             "mpris:length": 215_000_000,
             "mpris:trackid": "/track/1",
+            "xesam:url": "https://music.example/1",
         }
     )
     assert info.title == "Bloom"
@@ -57,6 +61,7 @@ def test_parse_basic():
     assert info.album == "Your Name"
     assert info.length_s == 215.0
     assert info.track_id == "/track/1"
+    assert info.url == "https://music.example/1"
 
 
 def test_parse_multiple_artists_joined():
@@ -67,6 +72,23 @@ def test_parse_artist_as_plain_string():
     assert parse_metadata({"xesam:artist": "Solo"}).artist == "Solo"
 
 
+def test_parse_recovers_artist_from_title_without_splitting_artist_field():
+    info = parse_metadata(
+        {
+            "xesam:title": "BTS (방탄소년단) '2.0' Official MV",
+            "xesam:artist": ["HYBE LABELS"],
+        }
+    )
+    assert info.title == "2.0"
+    assert info.artist == "BTS"
+
+
+def test_parse_keeps_title_pair_as_one_title():
+    info = parse_metadata({"xesam:title": "螺旋 - RASEN", "xesam:artist": ["9Lana"]})
+    assert info.title == "螺旋 - RASEN"
+    assert info.artist == "9Lana"
+
+
 def test_parse_strips_chrome_badge_and_youtube_suffix():
     info = parse_metadata({"xesam:title": "(309) 志铭 | YouTube Music", "xesam:artist": [""]})
     assert info.title == "志铭"
@@ -74,6 +96,16 @@ def test_parse_strips_chrome_badge_and_youtube_suffix():
 
 def test_parse_strips_trailing_dash_youtube():
     assert parse_metadata({"xesam:title": "Song - YouTube"}).title == "Song"
+
+
+def test_parse_cleans_platform_grammar_from_mpris_title():
+    info = parse_metadata(
+        {
+            "xesam:title": "BTS (방탄소년단) ‘SWIM’ Official MV",
+            "xesam:artist": ["HYBE LABELS"],
+        }
+    )
+    assert info.title == "SWIM"
 
 
 def test_parse_keeps_clean_title_and_never_empties():
@@ -165,3 +197,58 @@ def test_duration_drift_does_not_create_a_new_track_transition():
 
     assert stabilizer.observe(observation("/1", "Song", "Artist", at=1.0, duration=190.0)) is None
     assert stabilizer.transitioning is False
+
+
+def test_lyrics_lookup_gate_matches_classified_corpus():
+    # Driven from the raw MPRIS fields through parse_metadata, the way production
+    # reaches this gate. Feeding it the hand-written clean_title instead hid a rule
+    # that skipped legitimate songs whose raw titles still carried upload grammar.
+    results = {
+        case.raw_title: lyrics_lookup_reason(
+            parse_metadata(
+                {
+                    "xesam:title": case.raw_title,
+                    "xesam:artist": [case.raw_artist] if case.raw_artist else [],
+                }
+            )
+        )
+        for case in MPRIS_TITLE_CASES
+    }
+
+    skipped = {title for title, reason in results.items() if reason}
+    expected = {case.raw_title for case in MPRIS_TITLE_CASES if case.category == "not_music"}
+    assert skipped - expected == set(), f"songs the gate would skip: {sorted(skipped - expected)}"
+    assert expected - skipped == set(), f"non-songs the gate would query: {sorted(expected - skipped)}"
+
+
+def test_lyrics_lookup_gate_explains_duration_and_keeps_song_lengths():
+    long_track = TrackInfo("Long video", "Uploader", "", 2 * 60 * 60 + 1, "")
+    song = TrackInfo("Long song", "Artist", "", 2 * 60 * 60, "")
+
+    assert lyrics_lookup_reason(long_track) == "duration 7201s is longer than a normal song"
+    assert lyrics_lookup_reason(song) is None
+
+
+def test_the_non_song_gate_reads_what_the_player_reported():
+    # Title cleaning strips the very markers that identify a non-song upload, so a
+    # gate reading the cleaned title lets a one-hour compilation through. Both PRs
+    # were green alone; together the cleaner removed the evidence the gate needs.
+    raw = (
+        "路小雨 Lu Xiao Yu｜不能說的秘密 Secret OST | One hour 一小時放鬆音樂｜"
+        "周杰倫 Jay Chou｜Played by Elvis Piano 維敏彈鋼琴"
+    )
+    info = parse_metadata({"xesam:title": raw, "xesam:artist": ["Elvis Piano 維敏彈鋼琴"]})
+
+    assert info.title == "不能說的秘密 Secret OST", "the cleaner should still tidy the title"
+    assert info.reported_title == raw
+    assert lyrics_lookup_reason(info) is not None, "a one-hour compilation reached the providers"
+
+
+def test_a_bar_separated_remix_medley_is_not_queried():
+    # The marker is found in the reported title, so the word and CJK counts have to
+    # come from the same text: cleaning keeps only the first song, and counting
+    # there let a three-song medley through to the providers.
+    info = parse_metadata({"xesam:title": "春天里 | 晴天 | 走马 Remix", "xesam:artist": ["X"]})
+
+    assert info.title == "春天里", "the cleaner should still tidy the title"
+    assert lyrics_lookup_reason(info) == "title combines several song names"

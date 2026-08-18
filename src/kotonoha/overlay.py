@@ -15,7 +15,6 @@ from collections.abc import Callable
 from dataclasses import replace
 from functools import lru_cache
 
-from PyQt6 import sip
 from PyQt6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (
     QAction,
@@ -39,12 +38,21 @@ from PyQt6.QtWidgets import (
 )
 
 from .clock import MediaClock
-from .config import Config
-from .icons import lock_icon, player_icon, settings_icon
+from .config import TRACK_OFFSET_STEP_MS, Config, set_track_offset, track_identity_key
+from .icons import earlier_icon, later_icon, lock_icon, player_icon, settings_icon
 from .karaoke_label import KaraokeLabel
 from .lyrics.hanzi_fold import convert_script
 from .model import EMPTY_SNAPSHOT, LyricLine, LyricsSnapshot
-from .native import LayerShellController, default_package_dir
+from .platform import (
+    DefaultOverlayPlatformFactory,
+    LayerShellController,
+    QtWindowHost,
+    WindowPoint,
+    WindowPolicy,
+    WindowRectangle,
+    default_package_dir,
+)
+from .platform.overlay_contracts import DragMode, Output
 from .state import LyricsState
 from .strings import t
 
@@ -143,6 +151,7 @@ class LyricsOverlay(QWidget):
     # the target output's center, and output name. The offset is output-local;
     # virtual-desktop origins are deliberately excluded.
     position_changed = pyqtSignal(int, int, str)
+    track_offset_changed = pyqtSignal(str, int)
 
     def __init__(
         self,
@@ -165,7 +174,12 @@ class LyricsOverlay(QWidget):
         self._preserve_layer_pos_on_show = False
         self._dragging = False
         self._drag_moved = False
+        self._drag_applied = True
         self._drag_local = QPoint()
+        self._track_key = ""
+        self._feedback_timer = QTimer(self)
+        self._feedback_timer.setSingleShot(True)
+        self._feedback_timer.timeout.connect(self._restore_after_offset_feedback)
         app = QApplication.instance()
         desktop = app.property("xdg_current_desktop") if app is not None else ""
         self._controller = controller or LayerShellController(
@@ -173,14 +187,31 @@ class LyricsOverlay(QWidget):
             QGuiApplication.platformName(),
             desktop or "",
         )
-
+        self._host = QtWindowHost(self)
+        self._platform = DefaultOverlayPlatformFactory(self._controller)(self._host)
+        self._platform.prepare()
+        self._host.apply_window_policy(self._platform_policy())
+        for name, available, reason in (
+            (
+                "layer shell",
+                self._platform.capabilities.layer_shell,
+                self._platform.capabilities.layer_shell_reason,
+            ),
+            ("blur", self._platform.capabilities.blur, self._platform.capabilities.blur_reason),
+            (
+                "input regions",
+                self._platform.capabilities.input_region,
+                self._platform.capabilities.input_region_reason,
+            ),
+            (
+                "output rebinding",
+                self._platform.capabilities.output_rebinding,
+                self._platform.capabilities.output_rebinding_reason,
+            ),
+        ):
+            if not available:
+                logger.warning("Overlay %s unavailable: %s", name, reason or "no reason provided")
         self.setWindowTitle("Kotonoha")
-        self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.Window
-            | Qt.WindowType.WindowDoesNotAcceptFocus
-        )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
         self._build_ui()
@@ -188,6 +219,10 @@ class LyricsOverlay(QWidget):
 
         self._state.snapshot_changed.connect(self._on_snapshot)
         self._state.time_ticked.connect(self._on_tick)
+        if isinstance(app, QGuiApplication):
+            app.screenAdded.connect(self._on_screen_added)
+            app.screenRemoved.connect(self._on_screen_removed)
+        self._platform.set_output_handler(self._restore_output)
 
         self._render_timer = QTimer(self)
         self._render_timer.setInterval(RENDER_INTERVAL_MS)
@@ -197,6 +232,10 @@ class LyricsOverlay(QWidget):
         self._on_snapshot(self._state.snapshot)
 
     # --- UI ---
+
+    def _platform_policy(self) -> WindowPolicy:
+        """Keep the overlay's non-activating top-level window policy explicit."""
+        return WindowPolicy(does_not_accept_focus=True, recreate_surface=True)
 
     def _build_ui(self) -> None:
         self._container = QWidget(self)
@@ -269,6 +308,14 @@ class LyricsOverlay(QWidget):
         self._lock_btn.clicked.connect(self.passthrough_toggle_requested.emit)
         bar.addWidget(self._lock_btn)
 
+        self._earlier_btn = self._make_offset_button(earlier_icon, "overlay.offset.earlier")
+        self._earlier_btn.clicked.connect(self._nudge_earlier)
+        bar.addWidget(self._earlier_btn)
+
+        self._later_btn = self._make_offset_button(later_icon, "overlay.offset.later")
+        self._later_btn.clicked.connect(self._nudge_later)
+        bar.addWidget(self._later_btn)
+
         self._settings_btn = QToolButton(self._container)
         self._settings_btn.setFixedSize(22, 22)
         self._settings_btn.setIconSize(QSize(15, 15))
@@ -282,6 +329,16 @@ class LyricsOverlay(QWidget):
         self._update_lock_icon()
         return self._control_bar
 
+    def _make_offset_button(self, icon_factory, tooltip_key: str) -> QToolButton:
+        button = QToolButton(self._container)
+        button.setFixedSize(22, 22)
+        button.setIconSize(QSize(15, 15))
+        button.setIcon(icon_factory(CONTROL_ICON_COLOR))
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setStyleSheet(CONTROL_BUTTON_STYLE)
+        button.setToolTip(t(tooltip_key))
+        return button
+
     def _control_icon_color(self) -> str:
         """Darken the lock/gear icons on the light (white) panel so they stay
         visible; every other panel is dark, where the soft grey reads fine."""
@@ -290,6 +347,9 @@ class LyricsOverlay(QWidget):
     def _update_lock_icon(self) -> None:
         self._lock_btn.setIcon(lock_icon(self._passthrough, self._control_icon_color()))
         self._lock_btn.setToolTip(t("overlay.locked") if self._passthrough else t("overlay.unlocked"))
+        color = self._control_icon_color()
+        self._earlier_btn.setIcon(earlier_icon(color))
+        self._later_btn.setIcon(later_icon(color))
 
     def _show_player_menu(self) -> None:
         """Refresh and pop the player selector menu at the button (no dropdown arrow)."""
@@ -319,6 +379,8 @@ class LyricsOverlay(QWidget):
         the surface is click-through). The panel background is governed by the
         panel-style setting, NOT the lock state — see paintEvent."""
         self._control_bar.setVisible(not self._passthrough)
+        self._earlier_btn.setVisible(not self._passthrough)
+        self._later_btn.setVisible(not self._passthrough)
         self.update()  # repaint in case the control bar changed the pill size
 
     def _make_context_label(self) -> QLabel:
@@ -338,7 +400,6 @@ class LyricsOverlay(QWidget):
     # --- config ---
 
     def apply_config(self, config: Config) -> None:
-        previous_screen = self._active_screen
         self._config = config
         self._passthrough = config.passthrough
         self._active_screen = self._configured_screen() or self._active_screen or self.screen()
@@ -404,13 +465,6 @@ class LyricsOverlay(QWidget):
         self._apply_window_geometry()
         self.update()
         QTimer.singleShot(0, self._apply_blur)  # panel_style may have changed
-        if (
-            self.isVisible()
-            and self._controller.available
-            and self._active_screen is not None
-            and not self._same_screen(previous_screen, self._active_screen)
-        ):
-            self._recreate_layer_surface(self._active_screen)
 
     # --- geometry (fixed-size, margin-positioned panel) ---
 
@@ -472,11 +526,71 @@ class LyricsOverlay(QWidget):
 
     def _target_screen(self):
         screens = QGuiApplication.screens()
-        if self._active_screen is not None and self._active_screen in screens:
-            return self._active_screen
-        screen = self._configured_screen() or self.screen() or QApplication.primaryScreen()
+        active = self._active_screen
+        if active is not None and active in screens and self._usable_screen(active):
+            return active
+        screen = (
+            self._usable_screen(self._configured_screen())
+            or self._usable_screen(self.screen())
+            or self._usable_screen(QApplication.primaryScreen())
+            or next((candidate for candidate in screens if self._usable_screen(candidate)), None)
+        )
         self._active_screen = screen
+        self._platform.set_active_output(self._output(screen))
         return screen
+
+    @staticmethod
+    def _usable_screen(screen):
+        if screen is None:
+            return None
+        try:
+            return screen if not screen.geometry().isEmpty() else None
+        except RuntimeError:
+            return None
+
+    @staticmethod
+    def _output(screen) -> Output | None:
+        if screen is None:
+            return None
+        try:
+            geometry = screen.geometry()
+        except RuntimeError:
+            return None
+        if geometry.isEmpty():
+            return None
+        return Output(screen.name(), WindowRectangle(geometry.x(), geometry.y(), geometry.width(), geometry.height()))
+
+    def _connected_outputs(self) -> tuple[Output, ...]:
+        return tuple(output for screen in QGuiApplication.screens() if (output := self._output(screen)) is not None)
+
+    def _on_screen_removed(self, screen) -> None:
+        output = self._output(screen)
+        if output is not None:
+            self._platform.output_removed(output, self._connected_outputs(), self._config.screen_name or None)
+
+    def _on_screen_added(self, screen) -> None:
+        if self._output(screen) is not None:
+            self._platform.output_added(self._connected_outputs(), self._config.screen_name or None)
+
+    def _restore_output(self, output: Output) -> bool:
+        """Rebuild on a returning output, reporting whether a surface now exists."""
+        # Matched on name, not on the whole Output. The geometry recorded when the
+        # screen appeared can be a mode Qt has since replaced — screenAdded and
+        # geometryChanged are separate signals, and a mode change does not fire the
+        # former again — so full equality rejected the very output it was waiting
+        # for and left the surface unbuilt. The live geometry is read below.
+        screen = next(
+            (candidate for candidate in QGuiApplication.screens() if candidate.name() == output.name), None
+        )
+        if screen is None:
+            return False
+        self._active_screen = screen
+        self._bind_widget_screen(screen)
+        self._apply_window_geometry()  # the returning output may have a new mode
+        self._preserve_layer_pos_on_show = True  # showEvent must keep what we just computed
+        rebuilt = self.activate_layer_shell()  # must precede show(): see the bridge's make_overlay
+        self.show()
+        return rebuilt
 
     @staticmethod
     def _same_screen(first, second) -> bool:
@@ -523,7 +637,20 @@ class LyricsOverlay(QWidget):
         screen_h = geo.height() if geo else 720
         x = (screen_w - width) // 2 + self._config.margin_x
         y = self._config.margin_edge if self._config.anchor_top else (screen_h - height - self._config.margin_edge)
-        return self._clamp_to_screen(QPoint(x, y), screen=screen, width=width, height=height, allow_partial=True)
+        # A drag may legitimately park the panel past the edge — the surface is
+        # wider than the visible pill, so a right-hand park is stored as a large
+        # negative x. Honour that only on the output it was measured on: clamping
+        # it fully there would yank the panel back on the next geometry pass, and
+        # trusting it on a *smaller* output leaves 80x60 px of panel on screen.
+        same_output = (
+            geo is not None
+            and screen is not None
+            and screen.name() == self._config.screen_name
+            and (geo.width(), geo.height()) == (self._config.screen_width, self._config.screen_height)
+        )
+        return self._clamp_to_screen(
+            QPoint(x, y), screen=screen, width=width, height=height, allow_partial=same_output
+        )
 
     def _visible_area_ratio(self, pos: QPoint, width: int, height: int, screen) -> float:
         """Fraction of the surface that would fall inside ``screen``'s frame.
@@ -583,9 +710,11 @@ class LyricsOverlay(QWidget):
                     self._visible_area_ratio(self._layer_pos, width, height, screen) * 100,
                 )
                 self._layer_pos = self._centered_layer_pos(width, height, screen)
-        if not self._controller.available:
+        if not self._platform.capabilities.layer_shell:
             geo = screen.geometry()
-            self.move(geo.x() + self._layer_pos.x(), geo.y() + self._layer_pos.y())
+            self._platform.move_to(
+                WindowPoint(geo.x() + self._layer_pos.x(), geo.y() + self._layer_pos.y())
+            )
 
     def center_on_screen(self) -> None:
         """Move the overlay to the centre of the primary display (both axes).
@@ -613,14 +742,15 @@ class LyricsOverlay(QWidget):
         else:
             self._config.margin_edge = max(0, geo.height() - height - self._layer_pos.y())
         # A layer surface ties its output when created; moving onto another screen
-        # requires recreating it (it reuses the new _layer_pos). Otherwise just
-        # reposition.
+        # requires the platform to rebind the output. Otherwise reposition in place.
         if not self._same_screen(self._active_screen, screen):
-            self._recreate_layer_surface(screen)
-        elif self._controller.available:
-            ptr = self._window_ptr()
-            if ptr is not None:
-                self._controller.set_anchor_position(ptr, self._layer_pos.x(), self._layer_pos.y())
+            output = self._output(screen)
+            if output is not None:
+                moved = self._platform.move_to_output(output)
+                if not moved.succeeded:
+                    logger.warning("Output change failed: %s", moved.reason or "no reason given")
+        elif self._platform.capabilities.layer_shell:
+            self._platform.move_to(WindowPoint(self._layer_pos.x(), self._layer_pos.y()))
         else:
             self.move(geo.x() + self._layer_pos.x(), geo.y() + self._layer_pos.y())
 
@@ -654,6 +784,7 @@ class LyricsOverlay(QWidget):
             return
 
         self._container.setVisible(True)
+        self._track_key = track_identity_key(snapshot.title or "", snapshot.artist or "", snapshot.duration_s)
         current = self._convert_line(snapshot.current)
         assert current is not None  # snapshot.current is non-None here (checked above)
         previous = self._convert_line(snapshot.previous)
@@ -689,6 +820,7 @@ class LyricsOverlay(QWidget):
         )
 
     def _show_empty(self, snapshot: LyricsSnapshot) -> None:
+        self._track_key = ""
         self._prev_label.setText("")
         self._next_label.setText("")
         # No translation line while idle; the title carries the whole message.
@@ -709,7 +841,8 @@ class LyricsOverlay(QWidget):
     def _render_tick(self) -> None:
         t = self._clock.now()
         if t is not None:
-            t += self._config.lead_ms / 1000.0  # advance the sweep to compensate latency
+            offset = self._config.track_offsets.get(self._track_key, 0)
+            t += (self._config.lead_ms + offset) / 1000.0  # global latency plus recording-specific correction
         self._current.set_media_time(t)
         self._translation.set_media_time(t)
 
@@ -717,63 +850,62 @@ class LyricsOverlay(QWidget):
 
     def showEvent(self, a0: QShowEvent | None) -> None:
         super().showEvent(a0)
+        # A rebuild has already computed the position; recomputing it here would
+        # throw away the output the surface was just put back on.
         self._apply_window_geometry(reset_position=not self._preserve_layer_pos_on_show)
         self._preserve_layer_pos_on_show = False
         QTimer.singleShot(0, self.activate_layer_shell)
         QTimer.singleShot(100, self.activate_layer_shell)
 
-    def _window_ptr(self) -> int | None:
-        self.winId()  # force native handle creation
-        handle = self.windowHandle()
-        if handle is None:
-            return None
-        return sip.unwrapinstance(handle)
+    def activate_layer_shell(self) -> bool:
+        """Promote to a layer surface. MUST be called before the first show().
 
-    def activate_layer_shell(self) -> None:
-        """Promote to a layer surface. MUST be called before the first show()."""
+        Returns whether the surface is now a layer surface, so a caller that is
+        rebuilding one can tell a real rebuild from a fallback."""
         self._bind_widget_screen(self._target_screen())
-        ptr = self._window_ptr()
-        if ptr is None:
-            return
-        if self._controller.available:
-            self._controller.make_overlay(ptr)
-            self._controller.set_anchor_position(ptr, self._layer_pos.x(), self._layer_pos.y())
+        result = self._platform.activate()
+        capabilities = self._platform.capabilities
+        if capabilities.layer_shell and result.succeeded:
+            placement = self._platform.move_to(WindowPoint(self._layer_pos.x(), self._layer_pos.y()))
+            if not placement.succeeded:
+                # Activation succeeded, so the surface is mapped and the return value
+                # stays True; only the saved position was not applied. Dropping this
+                # left the overlay at the compositor's default anchor with nothing said.
+                logger.warning("Layer Shell placement failed: %s", placement.reason or "no reason given")
             self._apply_input_region()
             self._apply_blur()
-        else:
-            self._fallback_position()
-
-    def _recreate_layer_surface(self, screen) -> None:
-        """Recreate a mapped layer surface on ``screen``.
-
-        wl-layer-shell binds an output when ``get_layer_surface`` is called; the
-        output cannot be changed by updating margins on the existing surface.
-        Destroying the QWindow surface makes LayerShellQt create a new layer
-        surface with the QWindow's selected screen on the next activation.
-        """
-        self._active_screen = screen
-        if not self._controller.available or not self.isVisible():
-            self._bind_widget_screen(screen)
-            self._apply_window_geometry(reset_position=False)
-            return
-
-        self._preserve_layer_pos_on_show = True
-        self.hide()
-        handle = self.windowHandle()
-        if handle is not None:
-            handle.destroy()
-        self._bind_widget_screen(screen)
-        self._apply_window_geometry(reset_position=False)
-        self.activate_layer_shell()
-        self.show()
+            return True
+        if capabilities.layer_shell:
+            # The capability is there but activation failed — a missing window
+            # handle, or the bridge raising. Falling through silently left an
+            # already-mapped ordinary window unpositioned and with no input region,
+            # and said nothing about why.
+            logger.warning("Layer Shell activation failed: %s", result.reason or "no reason given")
+        self._fallback_position()
+        # An ordinary window still needs its input region: without this a config
+        # with passthrough on stayed clickable, so a locked overlay swallowed the
+        # pointer.
+        self._apply_input_region()
+        return False
 
     def _fallback_position(self) -> None:
-        """Position manually when layer-shell is unavailable (X11 / GNOME)."""
+        """Position as an ordinary window, for X11 and for a failed activation.
+
+        Through the host rather than the platform: this runs when Layer Shell is
+        unavailable *or* when it is available and activation failed, and in the
+        second case the Layer Shell adapter is still in place — asking it to move
+        would set a native anchor on a surface that was never promoted, which is
+        not a fallback at all.
+        """
         screen = self._target_screen()
         if screen is None:
             return
         geo = screen.geometry()
-        self.move(geo.x() + self._layer_pos.x(), geo.y() + self._layer_pos.y())
+        position = WindowPoint(geo.x() + self._layer_pos.x(), geo.y() + self._layer_pos.y())
+        try:
+            self._host.move_window(position)
+        except RuntimeError as exc:
+            logger.debug("Ordinary-window positioning failed: %s", exc)
 
     def set_passthrough(self, enabled: bool) -> None:
         self._passthrough = enabled
@@ -785,30 +917,65 @@ class LyricsOverlay(QWidget):
     def _apply_input_region(self) -> None:
         """Locked -> full click-through. Unlocked -> only the visible pill catches
         clicks, so the big transparent band around it stays click-through."""
-        ptr = self._window_ptr()
-        if ptr is None or not self._controller.available:
-            return
         if self._passthrough:
-            self._controller.set_passthrough(ptr, True)
+            self._platform.set_input_region(None)
         else:
             rect = self._container.geometry()
-            self._controller.set_input_rect(ptr, rect.x(), rect.y(), rect.width(), rect.height())
+            self._platform.set_input_region(
+                WindowRectangle(rect.x(), rect.y(), rect.width(), rect.height())
+            )
 
     def _refresh_input_region(self) -> None:
         if not self._passthrough:
             QTimer.singleShot(0, self._apply_input_region)
 
+    def _nudge_earlier(self) -> None:
+        """Move this track's lyrics earlier by one step.
+
+        A bound method per direction rather than a lambda closing over the step:
+        PyQt holds a bound method's receiver weakly, so the connection dies with the
+        widget instead of firing into a deleted C++ object.
+        """
+        self._nudge_offset(TRACK_OFFSET_STEP_MS)
+
+    def _nudge_later(self) -> None:
+        """Move this track's lyrics later by one step."""
+        self._nudge_offset(-TRACK_OFFSET_STEP_MS)
+
+    def _nudge_offset(self, delta_ms: int) -> None:
+        if not self._track_key:
+            return
+        current = self._config.track_offsets.get(self._track_key, 0)
+        offset = set_track_offset(self._config, self._track_key, current + delta_ms)
+        self.track_offset_changed.emit(self._track_key, offset)
+        self._show_offset_feedback(offset)
+        self._render_tick()
+
+    def _restore_after_offset_feedback(self) -> None:
+        """Put the lyric back after the offset readout.
+
+        A bound method, not a lambda: PyQt holds the receiver weakly for a bound
+        method, so the connection dies with the widget. A lambda is held strongly
+        and keeps firing into a deleted C++ object, which segfaults."""
+        self._on_snapshot(self._state.snapshot)
+
+    def _show_offset_feedback(self, offset_ms: int) -> None:
+        line = LyricLine(0, "offset-feedback", 0.0, 1e9, t("overlay.offset.value").format(offset=offset_ms), "", ())
+        self._current.set_line(line, False)
+        self._feedback_timer.start(1200)
+
+
     def _apply_blur(self) -> None:
-        """Blur the compositor content behind the pill for the frosted-glass style
-        (KWin backdrop-blur); no-op elsewhere, where the translucent fill remains."""
-        ptr = self._window_ptr()
-        if ptr is None or not self._controller.available:
+        """Blur the compositor content behind the pill for the frosted-glass style;
+        no-op where no blur protocol exists, leaving the translucent fill."""
+        if not self._platform.capabilities.blur:
             return
         if self._config.panel_style == "frost":
             rect = self._container.geometry()
-            self._controller.set_blur_region(ptr, rect.x(), rect.y(), rect.width(), rect.height(), PILL_RADIUS)
+            region = WindowRectangle(rect.x(), rect.y(), rect.width(), rect.height())
+            self._platform.set_blur_region(region, PILL_RADIUS)
         else:
-            self._controller.clear_blur(ptr)
+            self._platform.set_blur_region(None)
 
     def eventFilter(self, a0: QObject | None, a1: QEvent | None) -> bool:
         # The container resizes as the pill/lyric changes size; keep the input
@@ -837,9 +1004,19 @@ class LyricsOverlay(QWidget):
 
     def mousePressEvent(self, a0: QMouseEvent | None) -> None:
         if a0 is not None and not self._passthrough and a0.button() == Qt.MouseButton.LeftButton:
+            local = a0.position().toPoint()
+            global_position = a0.globalPosition().toPoint()
+            result = self._platform.begin_drag(
+                WindowPoint(local.x(), local.y()),
+                WindowPoint(global_position.x(), global_position.y()),
+            )
+            if result.mode is not DragMode.MANUAL:
+                super().mousePressEvent(a0)
+                return
             self._dragging = True
             self._drag_moved = False
-            self._drag_local = a0.position().toPoint()
+            self._drag_applied = True
+            self._drag_local = local
             self._render_timer.stop()  # pause the sweep so it isn't repainted mid-drag
             a0.accept()
         else:
@@ -860,16 +1037,18 @@ class LyricsOverlay(QWidget):
             # at an output boundary destroys the Wayland pointer grab and makes
             # the next mouse event disappear.
             self._layer_pos += diff
-            if self._controller.available:
-                ptr = self._window_ptr()
-                if ptr is not None:
-                    self._controller.set_anchor_position(ptr, self._layer_pos.x(), self._layer_pos.y())
-                    # No repaint: the bridge commits the surface, and the compositor
-                    # just re-positions the cached buffer — so the heavy lyric text
-                    # isn't re-rendered every frame, which is what killed tracking.
-            else:
-                geo = screen.geometry()
-                self.move(geo.x() + self._layer_pos.x(), geo.y() + self._layer_pos.y())
+            global_position = a0.globalPosition().toPoint()
+            moved = self._platform.update_drag(
+                WindowPoint(local.x(), local.y()),
+                WindowPoint(global_position.x(), global_position.y()),
+            )
+            if not moved.succeeded:
+                # The surface is where it was, so the drag has not taken effect.
+                # Remember that, or the release would save a position the visible
+                # window never reached.
+                self._drag_applied = False
+                logger.debug("Drag update was not applied: %s", moved.reason)
+            # The platform commits the surface, so avoid repainting heavy lyric text.
             a0.accept()
         else:
             super().mouseMoveEvent(a0)
@@ -877,11 +1056,21 @@ class LyricsOverlay(QWidget):
     def mouseReleaseEvent(self, a0: QMouseEvent | None) -> None:
         if self._dragging:
             moved = self._drag_moved
+            applied = self._drag_applied
             self._dragging = False
             self._drag_moved = False
+            self._drag_applied = True
+            self._platform.end_drag()
             self._render_timer.start()  # resume the sweep
-            if moved:
+            if moved and applied and self._platform.capabilities.client_positioning:
                 self._commit_drag_position(a0.position().toPoint() if a0 is not None else None)
+            elif moved:
+                # The window never went where the drag asked, so saving that
+                # position would put the config and the visible window out of step.
+                logger.info(
+                    "Not saving the dragged position: %s",
+                    self._platform.capabilities.client_positioning_reason,
+                )
             if a0 is not None:
                 a0.accept()
         else:
@@ -909,10 +1098,12 @@ class LyricsOverlay(QWidget):
             min_x, max_x = -width + 80, geo.width() - 80
             min_y, max_y = 0, geo.height() - 60
         else:
+            # Fully visible, both axes. This is the startup and rebuild path: the
+            # saved margins were computed against whatever output they were
+            # dragged on, and a smaller one must not leave the panel hanging off
+            # an edge where the user cannot see or reach it.
             min_x, max_x = 0, max(0, geo.width() - width)
-            # Keep the established bottom drag range; only horizontal placement
-            # is normalized to the fully visible edge on commit.
-            min_y, max_y = 0, geo.height() - 60
+            min_y, max_y = 0, max(0, geo.height() - height)
         x = max(min_x, min(pos.x(), max_x))
         y = max(min_y, min(pos.y(), max_y))
         return QPoint(x, y)
@@ -944,6 +1135,7 @@ class LyricsOverlay(QWidget):
         target_geo = target_screen.geometry()
         global_pos = surface_top_left
         self._active_screen = target_screen
+        self._platform.set_active_output(self._output(target_screen))
         width, height = self._window_size()
         self._layer_pos = self._clamp_to_screen(
             QPoint(global_pos.x() - target_geo.x(), global_pos.y() - target_geo.y()),
@@ -960,12 +1152,21 @@ class LyricsOverlay(QWidget):
         # center-relative coordinate system used by _compute_layer_pos().
         self._config.margin_x = self._layer_pos.x() - (target_geo.width() - width) // 2
         self._config.screen_name = target_screen.name()
+        # Record the geometry this offset was measured against, so loading it back
+        # can tell a deliberate park from one stranded by a resolution change.
+        self._config.screen_width = target_geo.width()
+        self._config.screen_height = target_geo.height()
         if not self._same_screen(surface_screen, target_screen):
-            self._recreate_layer_surface(target_screen)
-        elif self._controller.available:
-            ptr = self._window_ptr()
-            if ptr is not None:
-                self._controller.set_anchor_position(ptr, self._layer_pos.x(), self._layer_pos.y())
+            # The platform owns any protocol-specific output rebinding. Recording
+            # the output is not enough on layer shell: the surface stays on the
+            # output it was dragged away from until it is rebuilt.
+            output = self._output(target_screen)
+            if output is not None:
+                moved = self._platform.move_to_output(output)
+                if not moved.succeeded:
+                    logger.warning("Output change failed: %s", moved.reason or "no reason given")
+        elif self._platform.capabilities.layer_shell:
+            self._platform.move_to(WindowPoint(self._layer_pos.x(), self._layer_pos.y()))
         self.position_changed.emit(
             self._config.margin_edge,
             self._config.margin_x,

@@ -16,6 +16,8 @@ It works with browsers, Spotify, VLC, mpv, Cider, and other MPRIS-compatible pla
 - Wayland layer-shell overlay with click-through mode, dragging, translucency, and blur.
 - Settings and system tray controls for fonts, colors, position, opacity, icons, and language.
 
+Install the optional `mutagen` dependency to read LRC lyrics embedded in local audio tags.
+
 ## Installation
 
 ### Release packages
@@ -50,6 +52,8 @@ uv pip install --python .venv/bin/python ./kotonoha-*-linux_x86_64.whl
 .venv/bin/kotonoha
 ```
 
+Python 3.13 or newer is what releases are checked against. 3.11 and 3.12 install and pass CI, but they are not guaranteed: a break that only affects them will not hold up a release.
+
 ### From source
 
 Install the system dependencies first. `uv sync` then builds Kotonoha's native Wayland bridge automatically.
@@ -80,6 +84,7 @@ uv run kotonoha
 ## Before you start
 
 - Floating above fullscreen requires a compositor that implements `wlr-layer-shell`, such as KDE/KWin or a wlroots-based compositor. GNOME/Mutter falls back to a normal top-most window.
+- Frosted glass requires `ext-background-effect-v1` (KWin 6.7+, Mutter) or the older `org_kde_kwin_blur` (Plasma 6.6 and earlier). Without either, the panel stays translucent but unblurred and the frosted-glass options are greyed out.
 - Browser players expose MPRIS through extensions such as [Plasma Browser Integration](https://github.com/KDE/plasma-browser-integration) and/or `playerctld`.
 
 ## Configuration

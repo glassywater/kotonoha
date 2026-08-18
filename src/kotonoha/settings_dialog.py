@@ -8,7 +8,7 @@ from :mod:`kotonoha.strings`.
 
 from __future__ import annotations
 
-import os
+import logging
 import threading
 from dataclasses import replace
 from pathlib import Path
@@ -66,7 +66,8 @@ from PyQt6.QtWidgets import (
 
 from . import leaf_icon
 from .config import ACCENT_PRESETS, DEFAULT_ICON_NAME, VALID_LYRICS_SOURCES, Config
-from .native import LayerShellController, default_package_dir
+from .platform import OverlayPlatform, OverlayPlatformFactory, QtWindowHost, WindowRectangle
+from .players import PlayerInfo
 from .strings import UI_LANGUAGES, t
 from .tray import discover_icon_paths
 
@@ -80,6 +81,8 @@ _FONT_FALLBACKS = (
     "Microsoft YaHei", "PingFang SC", "Noto Sans", "DejaVu Sans",
 )
 
+logger = logging.getLogger(__name__)
+
 
 class _FontNameDelegate(QStyledItemDelegate):
     """Font-list delegate that previews each family name in its own font but drops
@@ -92,6 +95,17 @@ class _FontNameDelegate(QStyledItemDelegate):
         family = index.data()
         if isinstance(family, str) and family:
             option.font = QFont(family)  # render the name in its own font
+
+
+# A long "player · status · title - artist" row must not stretch the combo, and a
+# QStyledItemDelegate is the wrong tool for it: its initStyleOption runs during
+# sizeHint, where the option's widget may already be destroyed — Qt then crashes
+# in QWidget::style(). Elide when the row is built instead; it is our own string.
+_PLAYER_ROW_MAX_CHARS = 60
+
+
+def _elide_row(text: str) -> str:
+    return text if len(text) <= _PLAYER_ROW_MAX_CHARS else text[: _PLAYER_ROW_MAX_CHARS - 1] + "…"
 
 
 class _IconStrip(QListWidget):
@@ -328,13 +342,13 @@ def _skin(accent: str, theme: str = "dark", frosted: bool = False, opacity: floa
 _PAGE_FIELDS: tuple[tuple[str, ...], ...] = (
     ("ui_language", "theme", "frost_window", "settings_opacity"),                         # General
     ("icon_name", "window_icon_name"),                                                   # Icon
-    ("font_family", "font_style", "font_size", "context_font_size", "translation_font_size"),  # Text
+    ("font_family", "font_style", "font_size", "context_font_size", "translation_font_size", "furigana"),  # Text
     ("panel_style", "panel_width_mode", "panel_width", "opacity", "frost_opacity", "panel_accent_tint"),  # Panel
     ("accent_start", "accent_end", "accent_sweep", "fx_animate", "fx_transition",
      "fx_glow", "fx_word_pop", "fx_intensity"),                                          # Effects
     ("karaoke", "lead_ms", "show_translation", "current_line_only", "lyrics_script"),  # Lyrics
     ("anchor_top", "margin_edge", "margin_x", "passthrough"),                            # Position
-    ("lyrics_sources", "prefer_best_lyrics", "fuzzy_match", "cache_enabled"),             # Sources
+    ("lyrics_sources", "player_lock", "prefer_best_lyrics", "fuzzy_match", "cache_enabled"),  # Sources
 )
 
 
@@ -343,9 +357,17 @@ class SettingsDialog(QDialog):
     clear_cache_requested = pyqtSignal()
     restart_requested = pyqtSignal()
 
-    def __init__(self, config: Config, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        config: Config,
+        parent: QWidget | None = None,
+        *,
+        players: list[PlayerInfo] | None = None,
+        platform_factory: OverlayPlatformFactory | None = None,
+    ) -> None:
         super().__init__(parent)
         self._config = config
+        self._players = list(players or [])
         # Every icon strip built (tray + window), each with its own {key: item} map,
         # so accent re-renders can refresh all of them. Populated by _build_icon_picker.
         self._icon_pickers: list[tuple[_IconStrip, dict[str, QListWidgetItem]]] = []
@@ -354,17 +376,26 @@ class SettingsDialog(QDialog):
         self._initial_ui_language = config.ui_language
         self._theme = _resolve_theme(config.theme)
         self._did_fade_in = False
-        # Real KWin backdrop-blur behind the whole window (frosted glass), but only
-        # on KDE *Wayland* — that is where org_kde_kwin_blur applies. Anywhere else
-        # (X11, GNOME, offscreen) the window stays a solid panel, so we never turn it
-        # see-through where the blur would not actually happen.
-        desktop = os.environ.get("XDG_CURRENT_DESKTOP", "")
-        platform = QGuiApplication.platformName() or ""
-        self._blur = LayerShellController(default_package_dir(), platform, desktop)
-        self._blur_capable = self._blur.available and "wayland" in platform.lower() and "KDE" in desktop.upper()
+        # Real backdrop-blur behind the whole window (frosted glass), wherever the
+        # compositor advertises a blur protocol. Asking the compositor beats matching
+        # on the desktop name, which claimed KDE 6.7 could blur after it dropped
+        # org_kde_kwin_blur and denied Mutter, which speaks the replacement. Where
+        # nothing can blur the window stays a solid panel, so it is never turned
+        # see-through in front of a backdrop that will not be blurred.
+        self._platform: OverlayPlatform | None = None
+        if platform_factory is not None:
+            self._platform = platform_factory(QtWindowHost(self))
+        capabilities = self._platform.capabilities if self._platform is not None else None
+        self._blur_capable = capabilities is not None and capabilities.blur
+        # The cause travels with the capability, so the window can say which of the
+        # four situations it is rather than repeating the requirement.
+        self._blur_reason = capabilities.blur_reason if capabilities is not None else "bridge"
         # Wayland has no client-side window-opacity protocol, so animating/setting
         # windowOpacity there does nothing but spam "plugin does not support…".
-        self._window_opacity_ok = "wayland" not in platform.lower()
+        # Which session this is belongs to the platform layer: reading the Qt
+        # platform name here made presentation decide a compositor fact itself, and
+        # a name passed in as an argument is still that same decision.
+        self._window_opacity_ok = capabilities is None or capabilities.window_opacity
         self._frosted = self._blur_capable and config.frost_window
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -502,17 +533,27 @@ class SettingsDialog(QDialog):
         return sip.unwrapinstance(handle) if handle is not None else None
 
     def _apply_blur(self) -> None:
-        if not self._frosted:
+        if not self._frosted or self._platform is None:
             return
         ptr = self._window_ptr()
-        if ptr is not None:
-            self._blur.set_blur_region(ptr, 0, 0, self.width(), self.height(), _RADIUS)
+        if ptr is None:
+            return
+        result = self._platform.set_blur_region(WindowRectangle(0, 0, self.width(), self.height()), _RADIUS)
+        if result.succeeded:
+            return
+        # The window is painted translucent because a compositor blur is meant to sit
+        # behind it. Discarding this left the panel see-through over an unblurred
+        # backdrop — unreadable — while still reporting frosted glass as on.
+        logger.warning("Frosted glass unavailable, falling back to a solid panel: %s", result.reason)
+        self._frosted = False
+        self.setStyleSheet(_skin(self._config.accent_start, self._theme, self._frosted, self._win_opacity))
+        self.update()
 
     def hideEvent(self, a0: QHideEvent | None) -> None:
-        if self._frosted:
+        if self._frosted and self._platform is not None:
             ptr = self._window_ptr()
             if ptr is not None:
-                self._blur.clear_blur(ptr)
+                self._platform.set_blur_region(None)
         super().hideEvent(a0)
 
     def resizeEvent(self, a0: QResizeEvent | None) -> None:
@@ -575,14 +616,23 @@ class SettingsDialog(QDialog):
         self._theme_combo.setCurrentIndex(theme_idx if theme_idx >= 0 else 0)
         form.addRow(t("set.theme"), self._theme_combo)
 
-        # Frosted-glass settings window (real KWin blur; no effect off KDE Wayland).
-        # Disabled + a note when the platform can't blur, so it reads as unavailable
-        # rather than an option that silently does nothing.
+        # Frosted-glass settings window (real compositor blur; no effect without a
+        # blur protocol). Disabled + a note when the compositor can't blur, so it
+        # reads as unavailable rather than an option that silently does nothing.
         self._frost_window = QCheckBox(t("set.frost_window"))
         self._frost_window.setChecked(self._config.frost_window)
         self._frost_window.setEnabled(self._blur_capable)
         form.addRow(self._frost_window)
-        form.addRow(self._hint(t("set.frost_window_hint")))
+        # Say which cause it is rather than repeating the generic requirement: the
+        # bridge failing to load, the compositor offering no protocol, and a build
+        # without blur are three different things to act on.
+        reason_key = {
+            "session": "set.frost_window.no_session",
+            "bridge": "set.frost_window.no_bridge",
+            "protocol": "set.frost_window.no_protocol",
+            "build": "set.frost_window.no_build",
+        }.get(self._blur_reason or "")
+        form.addRow(self._hint(t(reason_key) if reason_key else t("set.frost_window_hint")))
 
         # How see-through this settings window is (whole window; text stays legible).
         # Applied on OK/Apply like every other setting (no live preview) — a live
@@ -948,6 +998,32 @@ class SettingsDialog(QDialog):
         layout.setSpacing(12)
         layout.addWidget(self._hint(t("set.sources_hint")))
 
+        self._player_combo = QComboBox()
+        self._player_combo.setMinimumContentsLength(24)
+        self._player_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self._player_combo.addItem(t("player.auto"), "")
+        offered = {player.bus_name for player in self._players}
+        for player in self._players:
+            # MPRIS reports the status as a protocol constant; show it in the UI language.
+            status_key = f"player.status.{(player.playback_status or '').lower()}"
+            status = t(status_key) if status_key != "player.status." else ""
+            parts = [player.identity or player.bus_name, status or t("player.status.unknown")]
+            if player.title:
+                track = player.title
+                if player.artist:
+                    track += t("player.track_artist").format(artist=player.artist)
+                parts.append(track)
+            if player.automatic:
+                parts.insert(0, t("player.automatic"))
+            self._player_combo.addItem(_elide_row(" · ".join(parts)), player.bus_name)
+        if self._config.player_lock and self._config.player_lock not in offered:
+            self._player_combo.addItem(self._config.player_lock + t("player.unavailable"), self._config.player_lock)
+        player_index = self._player_combo.findData(self._config.player_lock)
+        self._player_combo.setCurrentIndex(player_index if player_index >= 0 else 0)
+        layout.addWidget(QLabel(t("set.player")))
+        layout.addWidget(self._player_combo)
+        layout.addWidget(self._hint(t("set.player_hint")))
+
         self._sources_list = QListWidget()
         self._sources_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         enabled = self._config.lyrics_sources
@@ -1164,6 +1240,7 @@ class SettingsDialog(QDialog):
             prefer_best_lyrics=self._prefer_best.isChecked(),
             fuzzy_match=self._fuzzy_match.isChecked(),
             cache_enabled=self._cache_enabled.isChecked(),
+            player_lock=str(self._player_combo.currentData()),
         ).clamped()
 
     def _reset_current_page(self) -> None:
@@ -1194,14 +1271,14 @@ class SettingsDialog(QDialog):
         # Toggle the frosted backdrop live: apply/clear the KWin blur to match the
         # new setting, so the re-skin below can pick the right (translucent) card.
         frosted = self._blur_capable and self._config.frost_window
-        if frosted != self._frosted:
+        if frosted != self._frosted and self._platform is not None:
             self._frosted = frosted
             ptr = self._window_ptr()
             if ptr is not None:
                 if frosted:
                     self._apply_blur()
                 else:
-                    self._blur.clear_blur(ptr)
+                    self._platform.set_blur_region(None)
         # Re-skin the dialog itself so an accent OR theme change is visible right
         # away (tab underline, checkbox fill, light/dark palette) rather than only
         # after Settings is closed and reopened.

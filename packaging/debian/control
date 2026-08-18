@@ -38,6 +38,8 @@ Depends:
  python3-pyqt6,
  python3-pyqt6.qtsvg,
  python3-qasync
+Suggests:
+ python3-mutagen
 Description: desktop lyrics overlay for Linux
  Kotonoha displays synchronized lyrics for the currently playing track in a
  Wayland layer-shell overlay.

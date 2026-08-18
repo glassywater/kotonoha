@@ -52,6 +52,9 @@ class RecordingResolver:
         self.tracks.append(track)
         return self.result
 
+    async def resolve_hint(self, _session, _track, _sources, _hint):
+        return None
+
     def reset_memory(self):
         return None
 
@@ -86,6 +89,9 @@ class BlockingResolver(RecordingResolver):
             raise
 
 
+    async def resolve_hint(self, _session, _track, _sources, _hint):
+        return None
+
 class DeferredResolver(RecordingResolver):
     def __init__(self, result=None):
         super().__init__(result)
@@ -99,6 +105,9 @@ class DeferredResolver(RecordingResolver):
         return self.result
 
 
+    async def resolve_hint(self, _session, _track, _sources, _hint):
+        return None
+
 def track_commit(generation, title, artist):
     return TrackCommit(
         generation=generation,
@@ -108,7 +117,7 @@ def track_commit(generation, title, artist):
 
 
 def prepare_poll(provider, player):
-    async def active_player():
+    async def active_player(**_kwargs):
         return player, "org.mpris.MediaPlayer2.test"
 
     async def subscribed(_name):
@@ -156,6 +165,106 @@ async def test_active_player_prefers_complete_metadata_over_alphabetical(monkeyp
     assert result is not None
     assert result[1] == "org.mpris.MediaPlayer2.plasma-browser-integration"
     assert provider._current_name == "org.mpris.MediaPlayer2.plasma-browser-integration"
+
+
+async def test_active_player_prefers_player_that_started_recently(monkeypatch):
+    old = ("old", "Playing", TrackInfo("Song", "Artist", "Album", 180.0, "/old"))
+    new = ("new", "Playing", TrackInfo("Song", "Artist", "Album", 180.0, "/new"))
+    players = {"org.mpris.MediaPlayer2.old": old}
+    provider = MprisProvider(LyricsState(), resolver=RecordingResolver())
+    _wire_players(provider, players, monkeypatch)
+
+    first = await provider._active_player(now=0.0)
+    assert first is not None
+    assert first[1] == "org.mpris.MediaPlayer2.old"
+
+    players["org.mpris.MediaPlayer2.new"] = new
+    result = await provider._active_player(now=20.0)
+
+    assert result is not None
+    assert result[1] == "org.mpris.MediaPlayer2.new"
+
+
+async def test_active_player_keeps_current_when_new_player_is_within_recency_margin(monkeypatch):
+    old = ("old", "Playing", TrackInfo("Song", "Artist", "Album", 180.0, "/old"))
+    new = ("new", "Playing", TrackInfo("Song", "Artist", "Album", 180.0, "/new"))
+    players = {"org.mpris.MediaPlayer2.old": old}
+    provider = MprisProvider(LyricsState(), resolver=RecordingResolver())
+    _wire_players(provider, players, monkeypatch)
+
+    first = await provider._active_player(now=0.0)
+    assert first is not None
+    assert first[1] == "org.mpris.MediaPlayer2.old"
+
+    players["org.mpris.MediaPlayer2.new"] = new
+    result = await provider._active_player(now=mpris_module.RECENT_PLAYER_MARGIN / 2)
+
+    assert result is not None
+    assert result[1] == "org.mpris.MediaPlayer2.old"
+
+
+async def test_active_player_lock_beats_recently_started_rival(monkeypatch):
+    locked = ("locked", "Playing", TrackInfo("Song", "", "", 180.0, "/locked"))
+    rival = ("rival", "Playing", TrackInfo("Song", "Artist", "Album", 180.0, "/rival"))
+    players = {"org.mpris.MediaPlayer2.locked": locked}
+    provider = MprisProvider(LyricsState(), resolver=RecordingResolver())
+    provider.set_player_lock("org.mpris.MediaPlayer2.locked")
+    _wire_players(provider, players, monkeypatch)
+
+    first = await provider._active_player(now=0.0)
+    assert first is not None
+    assert first[1] == "org.mpris.MediaPlayer2.locked"
+
+    players["org.mpris.MediaPlayer2.rival"] = rival
+    result = await provider._active_player(now=20.0)
+
+    assert result is not None
+    assert result[1] == "org.mpris.MediaPlayer2.locked"
+
+
+async def test_active_player_drops_recency_stamp_for_vanished_player(monkeypatch):
+    vanished = ("vanished", "Playing", TrackInfo("Song", "Artist", "Album", 180.0, "/vanished"))
+    players = {"org.mpris.MediaPlayer2.vanished": vanished}
+    provider = MprisProvider(LyricsState(), resolver=RecordingResolver())
+    _wire_players(provider, players, monkeypatch)
+
+    result = await provider._active_player(now=0.0)
+    assert result is not None
+    assert "org.mpris.MediaPlayer2.vanished" in provider._playing_since
+
+    players.clear()
+    assert await provider._active_player(now=20.0) is None
+    assert "org.mpris.MediaPlayer2.vanished" not in provider._playing_since
+
+
+async def test_active_player_lock_beats_more_complete_rival(monkeypatch):
+    locked = ("locked", "Playing", TrackInfo("Song", "", "", 180.0, "/locked"))
+    rival = ("rival", "Playing", TrackInfo("Song", "Artist", "Album", 180.0, "/rival"))
+    players = {
+        "org.mpris.MediaPlayer2.locked": locked,
+        "org.mpris.MediaPlayer2.rival": rival,
+    }
+    provider = MprisProvider(LyricsState(), resolver=RecordingResolver())
+    provider.set_player_lock("org.mpris.MediaPlayer2.locked")
+    _wire_players(provider, players, monkeypatch)
+
+    result = await provider._active_player()
+
+    assert result is not None
+    assert result[1] == "org.mpris.MediaPlayer2.locked"
+
+
+async def test_active_player_absent_lock_falls_back_to_automatic(monkeypatch):
+    rival = ("rival", "Playing", TrackInfo("Song", "Artist", "Album", 180.0, "/rival"))
+    players = {"org.mpris.MediaPlayer2.rival": rival}
+    provider = MprisProvider(LyricsState(), resolver=RecordingResolver())
+    provider.set_player_lock("org.mpris.MediaPlayer2.closed")
+    _wire_players(provider, players, monkeypatch)
+
+    result = await provider._active_player()
+
+    assert result is not None
+    assert result[1] == "org.mpris.MediaPlayer2.rival"
 
 
 async def test_active_player_falls_back_to_only_source(monkeypatch):
@@ -520,3 +629,265 @@ async def test_late_reset_during_resolving_corrects_offset():
     await provider._poll_once(now=2.3)
     assert state.snapshot.current is not None
     assert state.snapshot.current.text == "first"
+
+
+class _Variant:
+    """What dbus hands back for a single property read: a Variant, not an a{sv} map."""
+
+    def __init__(self, value):
+        self.value = value
+
+
+class _PlayerProperties:
+    def __init__(self, identity, status, metadata):
+        self.identity = _Variant(identity)
+        self.status = _Variant(status)
+        self.metadata = _Variant(metadata)
+
+    async def call_get(self, _interface, _property):
+        return self.identity
+
+    async def call_get_all(self, _interface):
+        return {
+            "PlaybackStatus": self.status,
+            "Metadata": self.metadata,
+        }
+
+
+class _PlayerObject:
+    def __init__(self, properties):
+        self.properties = properties
+
+    def get_interface(self, interface):
+        if interface == "org.freedesktop.DBus.Properties":
+            return self.properties
+        raise AssertionError(interface)
+
+
+class _DiscoveryBus:
+    def __init__(self, players):
+        self.players = players
+
+    def get_proxy_object(self, name, _path, _introspection):
+        return _PlayerObject(self.players[name])
+
+
+async def test_available_players_reports_track_status_and_automatic_choice(monkeypatch):
+    playing_metadata = {
+        "xesam:title": "Song",
+        "xesam:artist": ["Artist"],
+        "mpris:trackid": "/playing",
+    }
+    idle_metadata = {"mpris:trackid": "/idle"}
+    players = {
+        "org.mpris.MediaPlayer2.firefox.instance_1_298": _PlayerProperties(
+            "Mozilla firefox", "Playing", playing_metadata
+        ),
+        "org.mpris.MediaPlayer2.plasma-browser-integration": _PlayerProperties(
+            "Mozilla Firefox", "Stopped", idle_metadata
+        ),
+    }
+    async def list_discovered_players(_bus):
+        return _names(players)
+
+    monkeypatch.setattr(mpris_module, "list_players", list_discovered_players)
+    provider = MprisProvider(LyricsState(), resolver=RecordingResolver())
+    provider._bus = _DiscoveryBus(players)
+
+    result = await provider.available_players()
+
+    assert result[0].title == "Song"
+    assert result[0].artist == "Artist"
+    assert result[0].playback_status == "Playing"
+    assert result[0].automatic is True
+    assert result[1].title == ""
+    assert result[1].playback_status == "Stopped"
+    assert result[1].automatic is False
+
+
+def _names(players):
+    return sorted(players)
+
+
+async def test_player_identity_is_unwrapped_from_its_variant():
+    # The metadata unwrapper takes a dict; a single property arrives wrapped on its
+    # own, and passing it there rendered every player in the picker as "{}".
+    from kotonoha.players import PlayerInfo
+
+    identity = _Variant("ElectronNCM")
+    assert str(getattr(identity, "value", identity) or "") == "ElectronNCM"
+    assert PlayerInfo("org.mpris.MediaPlayer2.ElectronNCM", "ElectronNCM").identity == "ElectronNCM"
+
+
+async def test_available_players_unwraps_the_identity_variant_through_the_bus(monkeypatch):
+    # The Variant fix is only worth as much as the call chain around it: a single
+    # property comes back as a Variant, not the a{sv} map the metadata unwrapper
+    # takes, and passing it there made every player show as "{}".
+    from dbus_fast import Variant
+
+    from kotonoha.providers import mpris as provider_module
+
+    class _Props:
+        async def call_get(self, interface: str, name: str) -> object:
+            assert (interface, name) == ("org.mpris.MediaPlayer2", "Identity")
+            return Variant("s", "ElectronNCM")
+
+        async def call_get_all(self, interface: str) -> dict[str, object]:
+            # The player interface, read for the row detail; empty is a valid answer.
+            return {}
+
+    class _Obj:
+        def get_interface(self, name: str) -> _Props:
+            assert name == "org.freedesktop.DBus.Properties"
+            return _Props()
+
+    class _Bus:
+        def get_proxy_object(self, name: str, path: str, introspection: object) -> _Obj:
+            return _Obj()
+
+    monkeypatch.setattr(
+        provider_module, "list_players", _async_return(["org.mpris.MediaPlayer2.ElectronNCM"])
+    )
+    provider = MprisProvider(LyricsState())
+    provider._bus = _Bus()
+
+    players = await provider.available_players()
+
+    assert [(p.bus_name, p.identity) for p in players] == [
+        ("org.mpris.MediaPlayer2.ElectronNCM", "ElectronNCM")
+    ]
+
+
+def _async_return(value):
+    async def _call(_bus):
+        return value
+
+    return _call
+async def test_non_song_never_reaches_the_resolver():
+    # The gate has to be wired into the load path, not merely defined: a 14-hour
+    # compilation must not be sent to every lyric provider.
+    compilation = dict(
+        VALID_METADATA,
+        **{"xesam:title": "Study with Miku - part4 -", "mpris:length": 5_040_000_000},
+    )
+    resolver = RecordingResolver()
+    provider = MprisProvider(LyricsState(), resolver=resolver, poll_interval=0.01)
+    prepare_poll(provider, FakePlayer(metadata=compilation))
+
+    await provider._poll_once(now=0.0)
+    await provider._poll_once(now=0.5)
+    if provider._load_task is not None:
+        await provider._load_task
+
+    assert resolver.tracks == []
+
+
+async def test_an_ordinary_song_still_reaches_the_resolver():
+    resolver = RecordingResolver()
+    provider = MprisProvider(LyricsState(), resolver=resolver, poll_interval=0.01)
+    prepare_poll(provider, FakePlayer(metadata=VALID_METADATA))
+
+    await provider._poll_once(now=0.0)
+    await provider._poll_once(now=0.5)
+    assert provider._load_task is not None
+    await provider._load_task
+
+    assert [track.title for track in resolver.tracks] == ["Song"]
+
+
+async def test_an_over_long_cider_duration_still_skips_the_lookup():
+    # The browser reports no length while Cider knows the real one. Running the
+    # gate on the MPRIS value first let a two-hour stream through, and the resolver
+    # then received the 7201s duration anyway — the very content this gate exists
+    # to keep off the providers.
+    resolver = RecordingResolver()
+    gate = SourceGate()
+    state = LyricsState()
+    provider = MprisProvider(state, resolver=resolver, gate=gate)
+    commit = track_commit(1, "Song", "Artist")
+    provider._current_commit = commit
+    gate.observe_snapshot(10, LyricsSnapshot(found=False, title="Song", artist="Artist", duration_s=7201.0))
+    gate.observe_tick(10, 0.0, True)
+
+    await provider._load_song(commit)
+
+    assert resolver.tracks == [], "a 7201s stream was sent to the lyric providers"
+    assert provider._content_owner == "none"
+
+
+async def test_a_repaired_commit_keeps_the_player_identity():
+    # A commit that arrives behind the current generation is rebuilt with a fresh
+    # one. Reconstructing it positionally dropped player_identity, so a recognised
+    # player stopped producing an exact hint and fell back to matching on the title.
+    class HintRecorder(RecordingResolver):
+        def __init__(self):
+            super().__init__()
+            self.hints = []
+
+        async def resolve_hint(self, _session, _track, _sources, _hint):
+            self.hints.append(_hint)
+            return None
+
+    resolver = HintRecorder()
+    provider = MprisProvider(LyricsState(), resolver=resolver)
+    info = TrackInfo("Song", "Artist", "", 180.0, "/track/12345")
+    provider._current_commit = TrackCommit(2, "org.mpris.MediaPlayer2.x", info, None, "ElectronNCM")
+
+    provider._schedule_load(TrackCommit(1, "org.mpris.MediaPlayer2.x", info, None, "ElectronNCM"))
+    assert provider._load_task is not None
+    await provider._load_task
+
+    assert resolver.hints, "the repaired commit produced no exact hint at all"
+    assert resolver.hints[-1].provider == "netease"
+    assert resolver.hints[-1].song_id == "12345"
+
+
+class _DetailFailingProperties(_PlayerProperties):
+    async def call_get_all(self, _interface):
+        raise RuntimeError("optional player detail unavailable")
+
+
+async def test_a_player_whose_detail_read_fails_still_appears_in_the_picker(monkeypatch):
+    # Identity and detail shared one try, so a player that answered its name but
+    # not its status vanished from the list and could not be selected at all.
+    players = {
+        "org.mpris.MediaPlayer2.vlc": _DetailFailingProperties("VLC", "Playing", {}),
+    }
+
+    async def list_discovered_players(_bus):
+        return _names(players)
+
+    monkeypatch.setattr(mpris_module, "list_players", list_discovered_players)
+    provider = MprisProvider(LyricsState(), resolver=RecordingResolver())
+    provider._bus = _DiscoveryBus(players)
+
+    result = await provider.available_players()
+
+    assert [p.identity for p in result] == ["VLC"]
+    assert result[0].playback_status == ""
+
+
+async def test_the_picker_marks_the_player_the_poll_would_follow(monkeypatch):
+    # The picker carried its own copy of the selection policy which ordered the last
+    # two fallbacks the other way round: a Playing player reporting no metadata beat
+    # a Paused one that reports a track, while the poll chose the opposite.
+    players = {
+        "org.mpris.MediaPlayer2.a-playing-empty": _PlayerProperties("Empty", "Playing", {}),
+        "org.mpris.MediaPlayer2.b-paused-song": _PlayerProperties(
+            "Paused", "Paused", {"xesam:title": "Song", "xesam:artist": ["Artist"]}
+        ),
+    }
+
+    async def list_discovered_players(_bus):
+        return _names(players)
+
+    monkeypatch.setattr(mpris_module, "list_players", list_discovered_players)
+    provider = MprisProvider(LyricsState(), resolver=RecordingResolver())
+    provider._bus = _DiscoveryBus(players)
+
+    result = await provider.available_players()
+
+    marked = [p.bus_name for p in result if p.automatic]
+    assert marked == ["org.mpris.MediaPlayer2.b-paused-song"], (
+        "the picker marked a player the poll would not follow"
+    )

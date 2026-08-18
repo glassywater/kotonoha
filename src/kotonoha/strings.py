@@ -48,7 +48,13 @@ STRINGS: dict[str, dict[str, str]] = {
     "overlay.select_player": {"en": "Select player", "zh-Hans": "选择播放器", "zh-Hant": "選擇播放器",
                               "ja": "プレイヤーを選択"},
     "overlay.idle": {"en": "♪ Waiting for music…", "zh-Hans": "♪ 等待音乐…",
-                     "zh-Hant": "♪ 等待音樂…", "ja": "♪ 音楽を待っています…"},
+                      "zh-Hant": "♪ 等待音樂…", "ja": "♪ 音楽を待っています…"},
+    "overlay.offset.earlier": {"en": "Move lyrics earlier by 50 ms", "zh-Hans": "歌词提前 50 毫秒",
+                                "zh-Hant": "歌詞提前 50 毫秒", "ja": "歌詞を 50 ms 早める"},
+    "overlay.offset.later": {"en": "Move lyrics later by 50 ms", "zh-Hans": "歌词延后 50 毫秒",
+                              "zh-Hant": "歌詞延後 50 毫秒", "ja": "歌詞を 50 ms 遅らせる"},
+    "overlay.offset.value": {"en": "Sync offset: {offset:+d} ms", "zh-Hans": "同步偏移：{offset:+d} 毫秒",
+                              "zh-Hant": "同步偏移：{offset:+d} 毫秒", "ja": "同期オフセット: {offset:+d} ms"},
 
     "settings.title": {"en": "Kotonoha Settings", "zh-Hans": "Kotonoha 设置",
                        "zh-Hant": "Kotonoha 設定", "ja": "Kotonoha 設定"},
@@ -128,14 +134,14 @@ STRINGS: dict[str, dict[str, str]] = {
     "set.panel_tint": {"en": "Panel follows accent color", "zh-Hans": "面板颜色跟随强调色",
                        "zh-Hant": "面板顏色跟隨強調色", "ja": "パネル色をアクセントに合わせる"},
     "set.panel_hint": {
-        "en": "Frosted glass needs KWin/KDE; elsewhere it falls back to a translucent panel. "
+        "en": "Frosted glass needs a compositor that can blur; elsewhere it falls back to a translucent panel. "
               "Each panel style keeps its own opacity (black can go fully transparent, frosted to pure blur).",
-        "zh-Hans": "毛玻璃需要 KWin/KDE 桌面；其他环境回退为半透明面板。每种面板样式各自记住不透明度"
+        "zh-Hans": "毛玻璃需要合成器支持背景模糊；其他环境回退为半透明面板。每种面板样式各自记住不透明度"
                    "（黑色可全透明，毛玻璃可纯模糊）。",
-        "zh-Hant": "毛玻璃需要 KWin/KDE 桌面；其他環境回退為半透明面板。每種面板樣式各自記住不透明度"
+        "zh-Hant": "毛玻璃需要合成器支援背景模糊；其他環境回退為半透明面板。每種面板樣式各自記住不透明度"
                    "（黑色可全透明，毛玻璃可純模糊）。",
-        "ja": "すりガラスは KWin/KDE が必要（他環境では半透明パネルに）。不透明度はスタイルごとに保持"
-              "（黒は完全透明、すりガラスは純ぼかしまで）。",
+        "ja": "すりガラスは背景ぼかし対応のコンポジタが必要（他環境では半透明パネルに）。"
+              "不透明度はスタイルごとに保持（黒は完全透明、すりガラスは純ぼかしまで）。",
     },
     "set.fx_animate": {"en": "Animations", "zh-Hans": "动画", "zh-Hant": "動畫", "ja": "アニメーション"},
     "set.fx_transition": {"en": "Line transition", "zh-Hans": "换行动画",
@@ -207,10 +213,34 @@ STRINGS: dict[str, dict[str, str]] = {
         "ja": "歌詞ソースの優先順位：上から順に、最初に歌詞が見つかったものを使用。"
               "ドラッグで並べ替え、チェックを外すと無効。",
     },
+    "set.player": {
+        "en": "MPRIS player", "zh-Hans": "MPRIS 播放器", "zh-Hant": "MPRIS 播放器", "ja": "MPRIS プレーヤー",
+    },
+    "player.auto": {"en": "Automatic", "zh-Hans": "自动选择", "zh-Hant": "自動選擇", "ja": "自動選択"},
+    "player.unavailable": {
+        "en": " (unavailable)", "zh-Hans": "（不可用）", "zh-Hant": "（無法使用）", "ja": "（利用不可）",
+    },
+    "player.status.playing": {"en": "Playing", "zh-Hans": "播放中", "zh-Hant": "播放中", "ja": "再生中"},
+    "player.status.paused": {"en": "Paused", "zh-Hans": "已暂停", "zh-Hant": "已暫停", "ja": "一時停止"},
+    "player.status.stopped": {"en": "Stopped", "zh-Hans": "已停止", "zh-Hant": "已停止", "ja": "停止"},
+    "player.track_artist": {
+        "en": " by {artist}", "zh-Hans": " - {artist}", "zh-Hant": " - {artist}", "ja": " - {artist}",
+    },
+    # Marks the row automatic selection is currently on. Reusing the word "automatic"
+    # here made it read as a second copy of the "Automatic" row above it.
+    "player.automatic": {"en": "Current", "zh-Hans": "当前", "zh-Hant": "目前", "ja": "現在"},
+    "player.status.unknown": {"en": "Unknown", "zh-Hans": "未知", "zh-Hant": "未知", "ja": "不明"},
+    "set.player_hint": {
+        "en": "Choose which detected MPRIS player supplies the lyrics.",
+        "zh-Hans": "选择提供歌词的 MPRIS 播放器。",
+        "zh-Hant": "選擇提供歌詞的 MPRIS 播放器。",
+        "ja": "歌詞を取得する MPRIS プレーヤーを選択します。",
+    },
     "src.netease": {"en": "Netease", "zh-Hans": "网易云", "zh-Hant": "網易雲", "ja": "网易云"},
     "src.lrclib": {"en": "lrclib", "zh-Hans": "lrclib", "zh-Hant": "lrclib", "ja": "lrclib"},
     "src.kugou": {"en": "Kugou", "zh-Hans": "酷狗", "zh-Hant": "酷狗", "ja": "酷狗（Kugou）"},
     "src.cider": {"en": "Cider", "zh-Hans": "Cider 自带", "zh-Hant": "Cider 自帶", "ja": "Cider 内蔵"},
+    "src.qqmusic": {"en": "QQ Music", "zh-Hans": "QQ 音乐", "zh-Hant": "QQ 音樂", "ja": "QQ 音楽"},
     "set.prefer_best": {
         "en": "Prefer best-matching lyrics",
         "zh-Hans": "优先匹配最佳歌词",
@@ -278,10 +308,34 @@ STRINGS: dict[str, dict[str, str]] = {
     "theme.dark": {"en": "Dark", "zh-Hans": "深色", "zh-Hant": "深色", "ja": "ダーク"},
     "set.frost_window": {"en": "Frosted-glass window", "zh-Hans": "毛玻璃窗口",
                          "zh-Hant": "毛玻璃視窗", "ja": "すりガラスウィンドウ"},
-    "set.frost_window_hint": {"en": "Frosted glass needs KDE Wayland; a solid window elsewhere.",
-                              "zh-Hans": "毛玻璃需要 KDE Wayland；其他环境为不透明窗口。",
-                              "zh-Hant": "毛玻璃需要 KDE Wayland；其他環境為不透明視窗。",
-                              "ja": "すりガラスは KDE Wayland が必要（他環境では不透明ウィンドウ）。"},
+    "set.frost_window_hint": {"en": "Frosted glass needs a compositor that can blur; a solid window elsewhere.",
+                              "zh-Hans": "毛玻璃需要合成器支持背景模糊；其他环境为不透明窗口。",
+                              "zh-Hant": "毛玻璃需要合成器支援背景模糊；其他環境為不透明視窗。",
+                              "ja": "すりガラスは背景ぼかしに対応したコンポジタが必要（他環境では不透明ウィンドウ）。"},
+    "set.frost_window.no_session": {
+        "en": "Unavailable: frosted glass needs a Wayland session.",
+        "zh-Hans": "不可用：毛玻璃需要 Wayland 会话。",
+        "zh-Hant": "無法使用：毛玻璃需要 Wayland 工作階段。",
+        "ja": "利用不可: すりガラスには Wayland セッションが必要です。",
+    },
+    "set.frost_window.no_bridge": {
+        "en": "Unavailable: the native bridge did not load.",
+        "zh-Hans": "不可用：本地桥接未能加载。",
+        "zh-Hant": "無法使用：原生橋接未能載入。",
+        "ja": "利用不可: ネイティブブリッジを読み込めませんでした。",
+    },
+    "set.frost_window.no_protocol": {
+        "en": "Unavailable: this compositor offers no backdrop-blur protocol.",
+        "zh-Hans": "不可用：该合成器未提供背景模糊协议。",
+        "zh-Hant": "無法使用：該合成器未提供背景模糊協定。",
+        "ja": "利用不可: このコンポジタは背景ぼかしプロトコルを提供していません。",
+    },
+    "set.frost_window.no_build": {
+        "en": "Unavailable: this build has no blur support.",
+        "zh-Hans": "不可用：此构建未包含模糊支持。",
+        "zh-Hant": "無法使用：此建置未包含模糊支援。",
+        "ja": "利用不可: このビルドはぼかしに対応していません。",
+    },
     "set.settings_opacity": {"en": "Window opacity", "zh-Hans": "窗口不透明度",
                              "zh-Hant": "視窗不透明度", "ja": "ウィンドウの不透明度"},
     "btn.restart": {"en": "Restart now", "zh-Hans": "立即重启",

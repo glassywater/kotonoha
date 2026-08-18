@@ -338,3 +338,53 @@ async def test_netease_caps_total_lyric_fetches(monkeypatch):
     result = await netease.fetch_artifact(SESSION, TrackMetadata("Song", "Artist", duration_s=180.0))
     assert result is None
     assert len(fetched) == 6  # the shared fetch budget, not all 8 HIGH candidates
+
+
+async def test_kugou_also_queries_the_title_with_the_performer():
+    # Kugou answers 200/OK with no candidates for titles it holds under another
+    # keyword, and neither form wins consistently: over twelve tracks the title
+    # alone found 3 and the title with the performer found 4, both together 6.
+    import base64
+
+    seen: list[str] = []
+
+    class _RecordingSession:
+        def get(self, url, params=None, headers=None, timeout=None):
+            if "search" in url:
+                seen.append((params or {}).get("keyword", ""))
+                data = (
+                    {"candidates": [{"id": "1", "accesskey": "K", "song": "晴天", "duration": 269000}]}
+                    if (params or {}).get("keyword") == "晴天 周杰伦"
+                    else {"candidates": []}
+                )
+                return _Resp(data)
+            lrc = "[00:01.00]found by the second keyword"
+            return _Resp({"fmt": "lrc", "content": base64.b64encode(lrc.encode()).decode()})
+
+    session = cast(aiohttp.ClientSession, _RecordingSession())
+    art = await kugou.fetch_artifact(session, TrackMetadata("晴天", "周杰伦", "", 269.0))
+
+    assert seen == ["晴天", "晴天 周杰伦"]
+    assert art is not None
+    assert [line.text for line in art.lines] == ["found by the second keyword"]
+
+
+def test_kugou_parses_the_payload_shape_it_caches():
+    # A word-timed hit is stored as base64 KRC. The cache deletes any row its
+    # parser cannot read, so a parser that only knows the LRC key made the
+    # word-timed path refetch on every single lookup.
+    import base64
+    import zlib
+
+    from kotonoha.lyrics.krc_parser import KRC_XOR_KEY
+
+    body = b"[0,1000]<0,500,0>word <500,500,0>two\n"
+    packed = zlib.compress(body)
+    encrypted = bytes(byte ^ KRC_XOR_KEY[index % len(KRC_XOR_KEY)] for index, byte in enumerate(packed))
+    payload = {"krc": base64.b64encode(b"krc1" + encrypted).decode("ascii")}
+
+    lines = kugou.parse_payload(payload)
+
+    assert lines, "the cached KRC payload produced no lines"
+    assert lines[0].words, "word timing was lost on the way through the cache"
+    assert kugou.parse_payload({"krc": "not base64 %%%"}) == ()

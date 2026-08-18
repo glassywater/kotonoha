@@ -28,6 +28,7 @@ Requires:       python3-aiohttp
 Requires:       python3-dbus-fast
 Requires:       layer-shell-qt
 Requires:       mecab
+Recommends:     python3-mutagen
 Provides:       bundled(python3dist(qasync)) = 0.28.0
 
 %description

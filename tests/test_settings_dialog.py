@@ -8,7 +8,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication, QListWidgetItem
 
 from kotonoha.config import Config
-from kotonoha.settings_dialog import SettingsDialog
+from kotonoha.players import PlayerInfo
+from kotonoha.settings_dialog import _PAGE_FIELDS, SettingsDialog
 
 
 @pytest.fixture(scope="module")
@@ -27,6 +28,44 @@ def test_cache_controls_roundtrip_and_clear_signal(qapp):
     assert dialog.current_config().cache_enabled is True
     dialog._clear_cache.click()
     assert emitted == [True]
+    dialog.close()
+
+
+def test_unavailable_player_lock_survives_dialog_roundtrip(qapp):
+    dialog = SettingsDialog(Config(player_lock="org.mpris.MediaPlayer2.closed"), players=[])
+
+    assert dialog._player_combo.currentData() == "org.mpris.MediaPlayer2.closed"
+    assert "unavailable" in dialog._player_combo.currentText().lower()
+    assert dialog.current_config().player_lock == "org.mpris.MediaPlayer2.closed"
+    dialog.close()
+
+
+def test_detected_players_are_readable_and_store_bus_name(qapp):
+    dialog = SettingsDialog(
+        Config(),
+        players=[PlayerInfo("org.mpris.MediaPlayer2.youtube", "YouTube Music", "Song", "Artist", "Playing", True)],
+    )
+
+    index = dialog._player_combo.findData("org.mpris.MediaPlayer2.youtube")
+    assert index > 0
+    assert dialog._player_combo.itemText(index) == "Current · YouTube Music · Playing · Song by Artist"
+    dialog._player_combo.setCurrentIndex(index)
+    assert dialog.current_config().player_lock == "org.mpris.MediaPlayer2.youtube"
+    dialog.close()
+
+
+def test_idle_player_row_has_status_and_unavailable_choice_stays_selected(qapp):
+    bus_name = "org.mpris.MediaPlayer2.closed"
+    dialog = SettingsDialog(
+        Config(player_lock=bus_name),
+        players=[PlayerInfo("org.mpris.MediaPlayer2.idle", "Idle player", playback_status="Stopped")],
+    )
+
+    idle_index = dialog._player_combo.findData("org.mpris.MediaPlayer2.idle")
+    assert dialog._player_combo.itemText(idle_index) == "Idle player · Stopped"
+    assert dialog._player_combo.currentData() == bus_name
+    assert dialog._player_combo.currentText() == bus_name + " (unavailable)"
+    assert dialog.current_config().player_lock == bus_name
     dialog.close()
 
 
@@ -133,10 +172,11 @@ def test_white_panel_option_present_and_roundtrips(qapp):
     dialog.close()
 
 
-def test_frost_only_on_kwin_wayland_and_blur_lifecycle_is_safe(qapp):
-    # Frost is gated to KDE Wayland; the offscreen test platform is not Wayland, so
-    # the window stays a solid panel. The blur lifecycle (apply on show, re-apply on
-    # resize, clear on hide) must be a sequence of safe no-ops that never raise.
+def test_frost_only_where_the_compositor_blurs_and_lifecycle_is_safe(qapp):
+    # Frost is gated on the compositor advertising a blur protocol; the offscreen
+    # test platform is not Wayland, so the window stays a solid panel. The blur
+    # lifecycle (apply on show, re-apply on resize, clear on hide) must be a
+    # sequence of safe no-ops that never raise.
     dialog = SettingsDialog(Config())
     assert dialog._frosted is False  # offscreen platform is not "wayland"
     dialog._apply_blur()
@@ -163,13 +203,15 @@ def test_frost_checkbox_is_greyed_out_and_noted_when_blur_unavailable(qapp):
 
     from kotonoha.strings import t
 
-    # Offscreen is not KDE Wayland, so frosted glass can't work: the checkbox reads
-    # as unavailable (disabled) and the KDE-only note is shown under it.
+    # Offscreen has no blur protocol, so frosted glass can't work: the checkbox
+    # reads as unavailable (disabled), and the note under it names which of the
+    # three causes it is rather than restating the requirement.
     dialog = SettingsDialog(Config())
     assert dialog._blur_capable is False
     assert dialog._frost_window.isEnabled() is False
     hints = [w.text() for w in dialog.findChildren(QLabel) if w.objectName() == "hint"]
-    assert t("set.frost_window_hint") in hints
+    causes = {t(f"set.frost_window.no_{cause}") for cause in ("session", "bridge", "protocol", "build")}
+    assert causes & set(hints), f"no cause shown for the disabled toggle: {hints}"
     dialog.close()
 
 
@@ -564,3 +606,101 @@ def test_icon_picker_shows_preview_only_and_updates_config(qapp):
 
     assert dialog.current_config().icon_name == "leaf-green.svg"
     dialog.close()
+
+
+def test_resetting_the_sources_page_restores_automatic_player_selection(qapp):
+    # Reset this tab rebuilds the page from defaults, but the staged config keeps
+    # any field the page's reset list omits — so a configured lock survived the
+    # reset and Apply persisted it.
+    dialog = SettingsDialog(
+        Config(player_lock="org.mpris.MediaPlayer2.closed"),
+        players=[PlayerInfo("org.mpris.MediaPlayer2.a", "A")],
+    )
+    sources = next(i for i, fields in enumerate(_PAGE_FIELDS) if "lyrics_sources" in fields)
+    dialog._nav.setCurrentRow(sources)
+
+    dialog._reset_current_page()
+
+    assert dialog.current_config().player_lock == ""
+    dialog.close()
+
+
+def test_every_field_the_dialog_edits_belongs_to_a_page_reset_list():
+    # A field the dialog writes but no page resets cannot be undone by Reset this
+    # tab: it stays in the staged config and Apply persists the old value.
+    from dataclasses import fields
+
+    covered = {name for page in _PAGE_FIELDS for name in page}
+    # Not editable here: the port is a CLI/config-file setting, and the position
+    # and per-track offsets are written by dragging and by the overlay's buttons.
+    not_edited = {"port", "screen_name", "screen_width", "screen_height", "track_offsets", "translation_language"}
+    missing = {f.name for f in fields(Config)} - covered - not_edited
+    assert not missing, f"no page resets these: {sorted(missing)}"
+
+
+def test_the_settings_window_does_not_import_the_mpris_provider():
+    # The row DTO lives in the neutral model module, so describing a player in the
+    # UI does not drag in the D-Bus provider.
+    import ast
+    from pathlib import Path
+
+    source = Path("src/kotonoha/settings_dialog.py").read_text(encoding="utf-8")
+    imported = {
+        node.module
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ImportFrom) and node.module
+    }
+    assert not {name for name in imported if "providers" in name}, imported
+
+
+def test_the_player_dto_is_exported_by_the_module_that_defines_it():
+    # A type imported from a module but missing from its __all__ is outside the
+    # contract that module declares — which is how it ended up appended after the
+    # lyrics model's exports, in a module about lyric payloads.
+    from kotonoha import players
+
+    assert players.__all__ == ["PlayerInfo"]
+    assert "PlayerInfo" not in getattr(__import__("kotonoha.model", fromlist=["model"]), "__all__", [])
+
+
+def test_a_refused_blur_falls_back_to_a_solid_panel(qapp, caplog) -> None:
+    # The window is painted translucent because a compositor blur is meant to sit
+    # behind it. Discarding the result left the panel see-through over an unblurred
+    # backdrop — unreadable — while still reporting frosted glass as on.
+    from dataclasses import replace
+
+    from kotonoha.platform.overlay_contracts import OverlayCapabilities, OverlayOperationResult
+    from kotonoha.platform.qt_window import QtWindowPlatform
+
+    class RefusingPlatform(QtWindowPlatform):
+        """Advertises blur and then refuses to install it, as a compositor may."""
+
+        @property
+        def capabilities(self) -> OverlayCapabilities:
+            return replace(super().capabilities, blur=True, blur_reason=None)
+
+        def set_blur_region(self, region, radius: int = 0) -> OverlayOperationResult:
+            del region, radius
+            return OverlayOperationResult.failure("compositor refused the effect")
+
+    dialog = SettingsDialog(Config(frost_window=True), platform_factory=RefusingPlatform)
+    assert dialog._frosted is True, "the dialog should start out expecting frosted glass"
+
+    with caplog.at_level("WARNING"):
+        dialog._apply_blur()
+
+    assert dialog._frosted is False, "the panel stayed translucent with nothing blurred behind it"
+    assert "compositor refused the effect" in caplog.text
+    dialog.close()
+
+
+def test_the_suite_runs_on_the_platform_its_assertions_describe(qapp) -> None:
+    # Several tests here assert what an offscreen platform does. conftest used to
+    # set QT_QPA_PLATFORM with setdefault, so a Wayland session's value won and
+    # those assertions were checked against the real compositor instead.
+    import os
+
+    from PyQt6.QtGui import QGuiApplication
+
+    assert QGuiApplication.platformName() == "offscreen"
+    assert "WAYLAND_DISPLAY" not in os.environ

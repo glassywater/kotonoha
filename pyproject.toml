@@ -25,7 +25,10 @@ authors = [
 ]
 license = "MIT"
 license-files = ["LICENSE"]
-requires-python = ">=3.10"
+# 3.13 and newer are what development targets and what a release is checked
+# against. 3.11 and 3.12 install and pass CI today, but they are not a
+# guarantee: a change that only they would break is not a release blocker.
+requires-python = ">=3.11"
 dependencies = [
   "PyQt6",
   "qasync",
@@ -38,11 +41,13 @@ furigana = [
   "fugashi",
   "unidic-lite",
 ]
+embedded-lyrics = [
+  "mutagen",
+]
 test = [
   "pytest",
   "pytest-asyncio",
   "ruff",
-  "tomli>=2; python_version < '3.11'",
   "ty",
 ]
 
@@ -76,3 +81,9 @@ overrides = [
   { include = ["src/kotonoha/lyrics/furigana.py"], rules = { "unresolved-import" = "ignore", "unresolved-attribute" = "ignore" } },
   { include = ["scripts/preview_furigana.py"], rules = { "unresolved-import" = "ignore", "unresolved-attribute" = "ignore" } },
 ]
+
+[tool.ty.rules]
+# The mutagen import needs a suppression when the optional embedded-lyrics extra
+# is absent and has none to suppress when it is installed. Whichever way a
+# checkout is set up, one of those states would otherwise fail the gate.
+unused-ignore-comment = "ignore"

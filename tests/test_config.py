@@ -1,6 +1,14 @@
 from typing import cast
 
-from kotonoha.config import Config, load_config, save_config
+from kotonoha.config import (
+    DEFAULT_LYRICS_SOURCES,
+    TRACK_OFFSET_CAP,
+    VALID_LYRICS_SOURCES,
+    Config,
+    load_config,
+    save_config,
+    set_track_offset,
+)
 
 
 def test_roundtrip(tmp_path):
@@ -14,10 +22,24 @@ def test_roundtrip(tmp_path):
     assert loaded.show_translation is False
 
 
+def test_qqmusic_is_known_but_not_default():
+    assert "qqmusic" in VALID_LYRICS_SOURCES
+    assert "qqmusic" not in DEFAULT_LYRICS_SOURCES
+    assert Config.from_dict({"lyrics_sources": ["qqmusic"]}).lyrics_sources == ["qqmusic"]
+
+
 def test_screen_name_roundtrips(tmp_path):
     path = tmp_path / "config.json"
     save_config(Config(screen_name="DP-1"), path)
     assert load_config(path).screen_name == "DP-1"
+
+
+def test_player_lock_roundtrips_and_clamps():
+    assert Config().player_lock == ""
+    assert Config(player_lock="org.mpris.MediaPlayer2.youtube").clamped().player_lock == (
+        "org.mpris.MediaPlayer2.youtube"
+    )
+    assert Config.from_dict({"player_lock": 123}).player_lock == ""
 
 
 def test_frost_panel_style_survives_clamp():
@@ -178,3 +200,37 @@ def test_icon_name_roundtrips_and_rejects_paths(tmp_path):
     save_config(Config(icon_name="leaf-pink.svg"), path)
     assert load_config(path).icon_name == "leaf-pink.svg"
     assert Config.from_dict({"icon_name": "../outside.svg"}).icon_name == "default"
+
+
+def test_every_lyric_source_has_a_display_name_in_every_language():
+    # Adding a source without its string leaves the settings list showing the raw
+    # key, e.g. "src.qqmusic". This is the guard for that.
+    from kotonoha.strings import STRINGS
+
+    missing = []
+    for source in VALID_LYRICS_SOURCES:
+        entry = STRINGS.get(f"src.{source}")
+        if entry is None:
+            missing.append(f"src.{source} (no entry)")
+            continue
+        for language in ("en", "zh-Hans", "zh-Hant", "ja"):
+            if not entry.get(language):
+                missing.append(f"src.{source} [{language}]")
+    assert not missing, f"lyric sources without a display name: {missing}"
+
+
+def test_track_offsets_roundtrip_and_evict_oldest(tmp_path):
+    path = tmp_path / "config.json"
+    cfg = Config()
+    for index in range(TRACK_OFFSET_CAP + 1):
+        set_track_offset(cfg, f"track-{index}", index)
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert len(loaded.track_offsets) == TRACK_OFFSET_CAP
+    assert "track-0" not in loaded.track_offsets
+    assert loaded.track_offsets["track-100"] == 100
+
+
+def test_track_without_offset_keeps_global_lead_only():
+    cfg = Config(lead_ms=120)
+    assert cfg.track_offsets.get("missing", 0) == 0

@@ -13,9 +13,25 @@ from ..model import LyricLine
 
 # [mm:ss], [mm:ss.xx] or [mm:ss.xxx]; a line may carry several time tags.
 _TIME = re.compile(r"\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\]")
+# The standard shift tag, in milliseconds and signed. Per the format's own
+# wording a "+" value causes the lyrics to appear sooner, so it is subtracted
+# from each timestamp rather than added. A sidecar written against a different
+# rip is commonly a second or two out without it.
+_OFFSET = re.compile(r"(?i)^\s*\[offset:\s*([+-]?\d{1,6})\s*\]\s*$", re.MULTILINE)
+_MAX_OFFSET_S = 60.0
+
+
+def _offset_seconds(text: str) -> float:
+    matches = _OFFSET.findall(text)
+    if not matches:
+        return 0.0
+    seconds = int(matches[-1]) / 1000.0  # the last tag wins, as players do
+    # A tag far outside plausible correction is junk, not an instruction.
+    return seconds if abs(seconds) <= _MAX_OFFSET_S else 0.0
 
 
 def parse_lrc(text: str) -> list[LyricLine]:
+    offset = _offset_seconds(text)
     entries: list[tuple[float, str]] = []
     for raw in text.splitlines():
         tags = list(_TIME.finditer(raw))
@@ -29,7 +45,8 @@ def parse_lrc(text: str) -> list[LyricLine]:
             seconds = int(tag.group(2))
             frac = tag.group(3) or ""
             millis = int((frac + "000")[:3]) if frac else 0
-            entries.append((minutes * 60 + seconds + millis / 1000.0, content))
+            start = minutes * 60 + seconds + millis / 1000.0 - offset
+            entries.append((max(0.0, start), content))
 
     entries.sort(key=lambda e: e[0])
     out: list[LyricLine] = []

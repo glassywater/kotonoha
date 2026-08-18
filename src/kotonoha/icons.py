@@ -34,6 +34,9 @@ _SETTINGS = _SVG_HEAD + (
 _PLAYER = _SVG_HEAD + (
     '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>'
 )
+# Lucide: chevron arrows — per-track timing nudges (earlier / later)
+_EARLIER = _SVG_HEAD + '<path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>'
+_LATER = _SVG_HEAD + '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>'
 
 
 def _render(svg: str, color: str) -> QIcon:
@@ -57,3 +60,11 @@ def settings_icon(color: str = "#FFFFFF") -> QIcon:
 
 def player_icon(color: str = "#FFFFFF") -> QIcon:
     return _render(_PLAYER, color)
+
+
+def earlier_icon(color: str = "#FFFFFF") -> QIcon:
+    return _render(_EARLIER, color)
+
+
+def later_icon(color: str = "#FFFFFF") -> QIcon:
+    return _render(_LATER, color)

@@ -29,21 +29,42 @@
 #include <map>
 
 #include "blur-client-protocol.h"
+#include "ext-background-effect-v1-client-protocol.h"
 
 
 namespace {
-    // KWin blur ("org_kde_kwin_blur") for the frosted-glass surfaces. Bound lazily
-    // from the registry; absent on non-KWin compositors, where blur is a no-op.
+    // Backdrop blur for the frosted-glass surfaces, over whichever protocol the
+    // compositor speaks:
+    //   * ext-background-effect-v1 — cross-desktop, implemented by KWin 6.7+ (which
+    //     dropped the KDE-private protocol below) and by Mutter;
+    //   * org_kde_kwin_blur — its predecessor, the only one Plasma <= 6.6 offers.
+    // Both are bound lazily from the registry; a compositor with neither leaves
+    // blur a no-op and the translucent fill renders unblurred.
+    struct ext_background_effect_manager_v1* g_effect_manager = nullptr;
+    uint32_t g_effect_caps = 0;  // from the capabilities event; blur may be absent
     struct org_kde_kwin_blur_manager* g_blur_manager = nullptr;
-    // One blur object PER surface, so several windows (the overlay pill AND the
-    // settings window) can each be frosted independently without clobbering a
+    // One effect/blur object PER surface, so several windows (the overlay pill AND
+    // the settings window) can each be frosted independently without clobbering a
     // single shared object.
+    std::map<struct wl_surface*, struct ext_background_effect_surface_v1*> g_effects;
     std::map<struct wl_surface*, struct org_kde_kwin_blur*> g_blurs;
     bool g_blur_probed = false;
 
+    void effect_capabilities(void*, struct ext_background_effect_manager_v1*, uint32_t flags) {
+        g_effect_caps = flags;
+    }
+    const struct ext_background_effect_manager_v1_listener kEffectListener = {effect_capabilities};
+
     void registry_global(void*, struct wl_registry* registry, uint32_t name,
                          const char* interface, uint32_t /*version*/) {
-        if (std::strcmp(interface, "org_kde_kwin_blur_manager") == 0) {
+        if (std::strcmp(interface, ext_background_effect_manager_v1_interface.name) == 0) {
+            g_effect_manager = static_cast<struct ext_background_effect_manager_v1*>(
+                wl_registry_bind(registry, name, &ext_background_effect_manager_v1_interface, 1));
+            // Listen here rather than after the roundtrip: the compositor sends
+            // capabilities as soon as the global is bound, and an event delivered
+            // to a proxy that has no listener yet is dropped.
+            ext_background_effect_manager_v1_add_listener(g_effect_manager, &kEffectListener, nullptr);
+        } else if (std::strcmp(interface, "org_kde_kwin_blur_manager") == 0) {
             g_blur_manager = static_cast<struct org_kde_kwin_blur_manager*>(
                 wl_registry_bind(registry, name, &org_kde_kwin_blur_manager_interface, 1));
         }
@@ -80,16 +101,31 @@ namespace {
         }
     }
 
-    struct org_kde_kwin_blur_manager* blur_manager(QPlatformNativeInterface* native) {
-        if (g_blur_probed) return g_blur_manager;
-        g_blur_probed = true;
-        struct wl_display* display = (struct wl_display*)native->nativeResourceForIntegration("wl_display");
-        if (!display) display = (struct wl_display*)native->nativeResourceForIntegration("display");
-        if (!display) return nullptr;
-        struct wl_registry* registry = wl_display_get_registry(display);
-        wl_registry_add_listener(registry, &kRegistryListener, nullptr);
-        wl_display_roundtrip(display);  // process global advertisements so the bind lands
-        return g_blur_manager;
+    // True once the compositor advertises ext-background-effect-v1 AND reports that
+    // it can actually blur: the capability is dynamic, and without it the effect
+    // object would be created but never render.
+    bool effect_blur_ready() {
+        return g_effect_manager && (g_effect_caps & EXT_BACKGROUND_EFFECT_MANAGER_V1_CAPABILITY_BLUR);
+    }
+
+    // Bind whichever blur protocol this compositor offers. Returns true when at
+    // least one is usable. Probed once; the result is cached.
+    bool probe_blur(QPlatformNativeInterface* native) {
+        if (!g_blur_probed) {
+            g_blur_probed = true;
+            struct wl_display* display = (struct wl_display*)native->nativeResourceForIntegration("wl_display");
+            if (!display) display = (struct wl_display*)native->nativeResourceForIntegration("display");
+            if (display) {
+                struct wl_registry* registry = wl_display_get_registry(display);
+                wl_registry_add_listener(registry, &kRegistryListener, nullptr);
+                wl_display_roundtrip(display);  // process global advertisements so the binds land
+                if (g_effect_manager) {
+                    wl_display_roundtrip(display);  // and then the capabilities event
+                }
+                wl_registry_destroy(registry);  // the bound globals outlive it
+            }
+        }
+        return effect_blur_ready() || g_blur_manager != nullptr;
     }
 }  // namespace
 #endif  // KOTONOHA_HAVE_BLUR
@@ -244,8 +280,21 @@ extern "C" {
         }
     }
 
-    // Ask KWin to blur whatever is behind the pill rectangle (frosted glass).
-    // No-op on compositors without the blur protocol; the translucent fill still
+    // 1 when this compositor can blur a surface's backdrop over either protocol, so
+    // the UI can gate the frosted-glass options on the real capability instead of
+    // guessing from the desktop name. Result cached after the first probe.
+    int koto_has_blur() {
+#ifndef KOTONOHA_HAVE_BLUR
+        return 0;  // built without blur
+#else
+        QPlatformNativeInterface* native = QGuiApplication::platformNativeInterface();
+        if (!native) return 0;
+        return probe_blur(native) ? 1 : 0;
+#endif  // KOTONOHA_HAVE_BLUR
+    }
+
+    // Ask the compositor to blur whatever is behind the pill rectangle (frosted
+    // glass). No-op where no blur protocol exists; the translucent fill still
     // renders, so the panel just isn't blurred there.
     void set_blur_region(void* window_ptr, int x, int y, int w, int h, int radius) {
 #ifndef KOTONOHA_HAVE_BLUR
@@ -257,25 +306,43 @@ extern "C" {
         if (!native) return;
         struct wl_surface* surface = (struct wl_surface*)native->nativeResourceForWindow("surface", window);
         if (!surface) return;
-        struct org_kde_kwin_blur_manager* manager = blur_manager(native);
-        if (!manager) return;
+        if (!probe_blur(native)) return;
 
-        // Replace any previous blur for THIS surface (leave other windows' blur).
-        auto existing = g_blurs.find(surface);
-        if (existing != g_blurs.end()) {
-            org_kde_kwin_blur_release(existing->second);
-            g_blurs.erase(existing);
-        }
-        struct org_kde_kwin_blur* blur = org_kde_kwin_blur_manager_create(manager, surface);
-        g_blurs[surface] = blur;  // keep it alive so the effect persists
         struct wl_compositor* compositor = get_compositor(native);
+        struct wl_region* region = nullptr;
         if (compositor) {
-            struct wl_region* region = wl_compositor_create_region(compositor);
+            region = wl_compositor_create_region(compositor);
             add_rounded_rect(region, x, y, w, h, radius);  // match the pill's rounded corners
-            org_kde_kwin_blur_set_region(blur, region);
-            wl_region_destroy(region);
         }
-        org_kde_kwin_blur_commit(blur);
+
+        if (effect_blur_ready()) {
+            // Replace any previous effect for THIS surface (leave other windows
+            // alone). Recreating rather than reusing also covers the surface being
+            // destroyed and a new one allocated at the same address — the overlay
+            // rebuilds its layer surface when it changes output, and the old effect
+            // object is inert from then on.
+            auto existing = g_effects.find(surface);
+            if (existing != g_effects.end()) {
+                ext_background_effect_surface_v1_destroy(existing->second);
+                g_effects.erase(existing);
+            }
+            struct ext_background_effect_surface_v1* effect =
+                ext_background_effect_manager_v1_get_background_effect(g_effect_manager, surface);
+            g_effects[surface] = effect;  // keep it alive so the effect persists
+            ext_background_effect_surface_v1_set_blur_region(effect, region);
+        } else if (g_blur_manager) {
+            auto existing = g_blurs.find(surface);
+            if (existing != g_blurs.end()) {
+                org_kde_kwin_blur_release(existing->second);
+                g_blurs.erase(existing);
+            }
+            struct org_kde_kwin_blur* blur = org_kde_kwin_blur_manager_create(g_blur_manager, surface);
+            g_blurs[surface] = blur;
+            if (region) org_kde_kwin_blur_set_region(blur, region);
+            org_kde_kwin_blur_commit(blur);
+        }
+
+        if (region) wl_region_destroy(region);
         wl_surface_commit(surface);
 #endif  // KOTONOHA_HAVE_BLUR
     }
@@ -290,15 +357,36 @@ extern "C" {
         if (!native) return;
         struct wl_surface* surface = (struct wl_surface*)native->nativeResourceForWindow("surface", window);
         if (!surface) return;
-        struct org_kde_kwin_blur_manager* manager = blur_manager(native);
-        if (!manager) return;
+        // No capability check before the erase. An object already created must be
+        // destroyed whatever the compositor reports now: withdrawing the blur
+        // capability makes probe_blur() false, and returning here would strand the
+        // proxy in the map for the life of the process.
+
+        // Destroying the effect object drops its regions on the next commit.
+        auto effect = g_effects.find(surface);
+        if (effect != g_effects.end()) {
+            ext_background_effect_surface_v1_destroy(effect->second);
+            g_effects.erase(effect);
+        }
         auto existing = g_blurs.find(surface);
         if (existing != g_blurs.end()) {
             org_kde_kwin_blur_release(existing->second);
             g_blurs.erase(existing);
         }
-        org_kde_kwin_blur_manager_unset(manager, surface);
+        if (g_blur_manager) org_kde_kwin_blur_manager_unset(g_blur_manager, surface);
         wl_surface_commit(surface);
+#endif  // KOTONOHA_HAVE_BLUR
+    }
+
+    // How many compositor-side blur objects this process is holding. Exported so a
+    // test can assert that repeated surface rebuilds do not accumulate them: the
+    // objects are keyed by wl_surface, and a rebuilt surface gets a new address, so
+    // one left behind can never be found again.
+    int koto_blur_object_count() {
+#ifndef KOTONOHA_HAVE_BLUR
+        return 0;  // built without blur
+#else
+        return static_cast<int>(g_effects.size() + g_blurs.size());
 #endif  // KOTONOHA_HAVE_BLUR
     }
 

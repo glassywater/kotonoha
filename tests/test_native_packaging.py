@@ -1,18 +1,12 @@
 from __future__ import annotations
 
-import importlib
 import os
 import re
 import subprocess
-import sys
+import tomllib
 from pathlib import Path
 
 import pytest
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    tomllib = importlib.import_module("tomli")
 
 PROJECT_ROOT = Path(__file__).parents[1]
 CMAKE_PROJECT = PROJECT_ROOT / "CMakeLists.txt"
@@ -52,8 +46,13 @@ def test_cmake_builds_and_installs_native_bridge() -> None:
             "find_package(Qt6GuiPrivate REQUIRED)",
             "find_package(LayerShellQt CONFIG REQUIRED)",
             "pkg_check_modules(WaylandClient REQUIRED IMPORTED_TARGET wayland-client)",
-            # Optional KWin blur protocol codegen (frosted-glass panel).
+            # Optional blur protocol codegen (frosted-glass panel): the
+            # cross-desktop ext-background-effect-v1 and the KDE-private
+            # org_kde_kwin_blur it replaced are both generated.
             "find_program(WAYLAND_SCANNER wayland-scanner)",
+            "foreach(KOTONOHA_PROTOCOL IN ITEMS blur ext-background-effect-v1)",
+            '"${CMAKE_CURRENT_SOURCE_DIR}/src/kotonoha/protocols/${KOTONOHA_PROTOCOL}.xml"',
+            'list(APPEND KOTONOHA_BLUR_SOURCES "${KOTONOHA_PROTOCOL_HEADER}" "${KOTONOHA_PROTOCOL_CODE}")',
             "target_compile_definitions(koto-layer PRIVATE KOTONOHA_HAVE_BLUR)",
             "add_library(koto-layer SHARED src/kotonoha/layer_shell_bridge.cpp ${KOTONOHA_BLUR_SOURCES})",
             "Qt6::GuiPrivate",
@@ -371,3 +370,50 @@ def test_debian_rules_leave_the_source_tree_unchanged_on_repeated_configure(
         "clean",
         "clean",
     ]
+
+
+def test_the_release_check_imports_a_module_that_exists():
+    # The clean-environment wheel check runs an import against the installed
+    # package. Naming a module the tree no longer has fails the release workflow
+    # rather than any test, so nothing here would have caught it.
+    import importlib
+    import re
+
+    workflow = read_packaging_file(PACKAGE_WORKFLOW)
+    for module in set(re.findall(r"from (kotonoha[\w.]*) import", workflow)):
+        importlib.import_module(module)
+def _ci_python_matrix() -> list[str]:
+    """Return the interpreter versions the test workflow's matrix actually lists.
+
+    The block is located and its items read, rather than the whole file searched
+    for a substring: `- "3.13"` appears in a comment and in the per-version include
+    entries too, so a plain `in workflow` check passed on text that runs nothing.
+    A YAML parser would be exact, but this repository has no test-time YAML
+    dependency and one matrix key does not earn adding it.
+    """
+    workflow = read_packaging_file(TEST_WORKFLOW).splitlines()
+    start = next(i for i, line in enumerate(workflow) if line.strip() == "python-version:")
+    indent = len(workflow[start]) - len(workflow[start].lstrip())
+    versions: list[str] = []
+    for line in workflow[start + 1 :]:
+        stripped = line.strip()
+        if not stripped.startswith("- "):
+            break
+        if len(line) - len(line.lstrip()) <= indent:
+            break
+        versions.append(stripped.removeprefix("- ").strip().strip('"'))
+    return versions
+
+
+def test_the_declared_python_floor_matches_what_ci_runs() -> None:
+    # A floor the CI matrix contradicts is not a supported version, it is a claim.
+    pyproject = tomllib.loads(read_packaging_file(PROJECT_ROOT / "pyproject.toml"))
+    assert pyproject["project"]["requires-python"] == ">=3.11"
+
+    matrix = _ci_python_matrix()
+
+    assert "3.10" not in matrix, "CI still runs a version the project no longer supports"
+    assert "3.11" in matrix, "the declared floor is not covered by CI"
+    # 3.13 and up are the guaranteed range, so they must always be in the matrix.
+    for guaranteed in ("3.13", "3.14"):
+        assert guaranteed in matrix, f"{guaranteed} is promised but not run"

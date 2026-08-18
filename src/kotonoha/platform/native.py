@@ -7,6 +7,10 @@ degrades: on X11 it is a normal top-most window (``_NET_WM_STATE_ABOVE``) that
 the WM positions; on a layer-shell-less Wayland session it is an ordinary window
 the compositor places and stacks — it cannot stay above other apps and cannot be
 positioned precisely (``self.move()`` is a no-op on Wayland).
+
+Backdrop blur is tracked separately from layer-shell (``blur_available`` vs
+``available``): it rides on the same library but on its own protocols, so a
+Wayland compositor without layer-shell can still frost the panel.
 """
 
 from __future__ import annotations
@@ -16,7 +20,8 @@ import logging
 import sysconfig
 from pathlib import Path
 
-from .lyrics_loader import find_layer_shell_library, overlay_mode_available, should_disable_layer_shell
+from .detect import find_layer_shell_library, overlay_mode_available, should_disable_layer_shell
+from .overlay_contracts import OverlayCapabilities
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +30,8 @@ class LayerShellController:
     def __init__(self, package_dir: str, platform_name: str, current_desktop: str) -> None:
         self._platform = platform_name
         self._lib: ctypes.CDLL | None = None
+        self._layer_shell = False
+        self._blur_reason: str | None = None
         self._disabled_reason: str | None = None
 
         # wlr-layer-shell is Wayland-only. On X11 the .so still dlopens (its Qt /
@@ -33,17 +40,6 @@ class LayerShellController:
         # fallback. Refuse it up front so the overlay takes its top-most path.
         if not platform_name.startswith("wayland"):
             self._disabled_reason = "Non-Wayland session; shown as a top-most window positioned by the WM."
-            logger.info("%s", self._disabled_reason)
-            return
-
-        # Fast path for a known layer-shell-less Wayland compositor (GNOME/Mutter).
-        # The runtime registry probe below is authoritative when the bridge exposes
-        # it; this name check still catches GNOME with an older bridge.
-        if should_disable_layer_shell(platform_name, current_desktop):
-            self._disabled_reason = (
-                "GNOME/Mutter Wayland does not implement wlr-layer-shell; "
-                "falling back to a normal top-most window."
-            )
             logger.info("%s", self._disabled_reason)
             return
 
@@ -60,20 +56,36 @@ class LayerShellController:
             logger.warning("%s", self._disabled_reason)
             return
 
-        # Authoritative runtime check when the bridge provides it: does THIS
-        # compositor advertise zwlr_layer_shell_v1? Catches every layer-shell-less
-        # Wayland session name-matching misses (Weston, Cinnamon, GNOME under any
-        # XDG value) and avoids the Budgie/wlroots false-positive. An older bridge
-        # without the symbol falls back to the name check above.
-        if hasattr(lib, "koto_has_layer_shell") and not lib.koto_has_layer_shell():
+        # The bridge is kept even without layer-shell: background blur rides on the
+        # same library, and ext-background-effect-v1 works on compositors (Mutter)
+        # that have no layer-shell at all.
+        self._lib = lib
+
+        # Ask the compositor first. The runtime registry probe answers for THIS
+        # session — it catches every layer-shell-less compositor a name match misses
+        # (Weston, Cinnamon, GNOME under any XDG value), avoids the Budgie/wlroots
+        # false positive, and lets a GNOME-branded session that does advertise
+        # zwlr_layer_shell_v1 use it. The desktop name decides nothing while the
+        # probe is available; it is only the fallback for a bridge too old to have
+        # the symbol.
+        probe = getattr(lib, "koto_has_layer_shell", None)
+        if probe is not None:
+            if not probe():
+                self._disabled_reason = (
+                    "Compositor does not implement wlr-layer-shell; shown as an ordinary "
+                    "window the compositor places and stacks."
+                )
+                logger.info("%s", self._disabled_reason)
+                return
+        elif should_disable_layer_shell(platform_name, current_desktop):
             self._disabled_reason = (
-                "Compositor does not implement wlr-layer-shell; shown as an ordinary "
-                "window the compositor places and stacks."
+                "GNOME/Mutter Wayland does not implement wlr-layer-shell; "
+                "falling back to a normal top-most window."
             )
             logger.info("%s", self._disabled_reason)
             return
 
-        self._lib = lib
+        self._layer_shell = True
 
     @staticmethod
     def _load(lib_path: str) -> ctypes.CDLL:
@@ -92,6 +104,8 @@ class LayerShellController:
                 raise OSError(f"bridge built against Qt {built}, PyQt6 runtime is Qt {QT_VERSION_STR}")
         if hasattr(lib, "koto_has_layer_shell"):
             lib.koto_has_layer_shell.restype = ctypes.c_int
+        if hasattr(lib, "koto_has_blur"):
+            lib.koto_has_blur.restype = ctypes.c_int
         lib.make_overlay.argtypes = [ctypes.c_void_p]
         lib.set_passthrough.argtypes = [ctypes.c_void_p, ctypes.c_bool]
         lib.set_input_rect.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
@@ -102,15 +116,66 @@ class LayerShellController:
             lib.set_blur_region.argtypes = [ctypes.c_void_p] + [ctypes.c_int] * 5
         if hasattr(lib, "clear_blur"):
             lib.clear_blur.argtypes = [ctypes.c_void_p]
+        if hasattr(lib, "koto_blur_object_count"):
+            lib.koto_blur_object_count.restype = ctypes.c_int
         return lib
 
     @property
     def available(self) -> bool:
-        return self._lib is not None
+        """Whether the surface can be promoted to a wlr-layer-shell surface."""
+        return self._layer_shell
+
+    @property
+    def blur_available(self) -> bool:
+        """Whether the compositor can blur a surface's backdrop, over either
+        ext-background-effect-v1 (KWin 6.7+, Mutter) or org_kde_kwin_blur (Plasma
+        <= 6.6). Independent of layer-shell, so the frosted-glass options can be
+        offered wherever the blur actually renders instead of being guessed from
+        the desktop name.
+
+        Read live, not cached. ext-background-effect-v1 sends its `capabilities`
+        event again whenever the answer changes, and the bridge keeps a listener on
+        the bound manager, so a cached Python answer was the one thing that could
+        still report blur after the compositor withdrew it — or keep the options
+        disabled after it gained it, until the process restarted."""
+        if self._lib is None:
+            # A non-Wayland session skips loading the bridge on purpose, which is
+            # not the same as a load that failed — the settings window would
+            # otherwise report a broken install on every X11 desktop.
+            self._blur_reason = "session" if not self._platform.startswith("wayland") else "bridge"
+            return False
+        if not hasattr(self._lib, "koto_has_blur"):
+            self._blur_reason = "build"
+            return False
+        if bool(self._lib.koto_has_blur()):
+            self._blur_reason = None
+            return True
+        self._blur_reason = "protocol"
+        return False
+
+    @property
+    def blur_disabled_reason(self) -> str | None:
+        """Why blur is unavailable, as a stable cause the UI can translate.
+
+        "session" — not a Wayland session, so the bridge is skipped on purpose.
+        "bridge" — the native library did not load at all.
+        "protocol" — the compositor advertises neither blur protocol.
+        "build" — this build has no blur support compiled in.
+        None when blur is available. A cause code rather than a sentence, so the
+        settings window can say which one it is in the user's language instead of
+        showing the same generic hint for every case.
+        """
+        if self.blur_available:
+            return None
+        return self._blur_reason
 
     @property
     def disabled_reason(self) -> str | None:
         return self._disabled_reason
+
+    @property
+    def capabilities(self) -> OverlayCapabilities:
+        return OverlayCapabilities.from_controller(self)
 
     def overlay_mode_available(self) -> bool:
         return overlay_mode_available(
@@ -118,9 +183,12 @@ class LayerShellController:
         )
 
     # --- bridge calls (no-op when unavailable) ---
+    #
+    # The layer-shell calls also require the protocol itself, not just a loaded
+    # bridge: the library stays loaded for blur on compositors without layer-shell.
 
     def make_overlay(self, window_ptr: int) -> None:
-        if self._lib:
+        if self._lib and self._layer_shell:
             self._lib.make_overlay(ctypes.c_void_p(window_ptr))
 
     def set_passthrough(self, window_ptr: int, enabled: bool) -> None:
@@ -132,11 +200,11 @@ class LayerShellController:
             self._lib.set_input_rect(ctypes.c_void_p(window_ptr), x, y, w, h)
 
     def set_anchor_position(self, window_ptr: int, x: int, y: int) -> None:
-        if self._lib:
+        if self._lib and self._layer_shell:
             self._lib.set_anchor_position(ctypes.c_void_p(window_ptr), x, y)
 
     def set_keyboard_interactivity(self, window_ptr: int, enabled: bool) -> None:
-        if self._lib:
+        if self._lib and self._layer_shell:
             self._lib.set_keyboard_interactivity(ctypes.c_void_p(window_ptr), enabled)
 
     def set_blur_region(self, window_ptr: int, x: int, y: int, w: int, h: int, radius: int) -> None:
@@ -147,9 +215,25 @@ class LayerShellController:
         if self._lib and hasattr(self._lib, "clear_blur"):
             self._lib.clear_blur(ctypes.c_void_p(window_ptr))
 
+    @property
+    def blur_object_count(self) -> int:
+        """Compositor-side blur objects this process is holding.
+
+        The bridge keys them on the wl_surface, so one left behind when a surface
+        is rebuilt can never be found again. Exported so a test can assert that
+        repeated rebuilds do not accumulate them; -1 when the bridge is too old to
+        report it."""
+        if self._lib is None or not hasattr(self._lib, "koto_blur_object_count"):
+            return -1
+        return int(self._lib.koto_blur_object_count())
+
 
 def default_package_dir() -> str:
     source_dir = Path(__file__).parent
+    # The bridge lives at the package root (kotonoha/), but this module lives under
+    # kotonoha/platform/, so step back one level before resolving the package dir.
+    if source_dir.name == "platform":
+        source_dir = source_dir.parent
     # The loaded package dir (__file__) is authoritative: with PYTHONPATH=src it is
     # the source checkout with its freshly built bridge; installed it is the
     # site-packages build. Prefer it so the .so matches this exact code/runtime —

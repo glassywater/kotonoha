@@ -88,6 +88,8 @@ def entry_point() -> int:
     from PyQt6.QtCore import QCoreApplication, Qt
     from PyQt6.QtWidgets import QApplication
 
+    from .platform.detect import current_desktop
+
     if hasattr(Qt.HighDpiScaleFactorRoundingPolicy, "PassThrough"):
         QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
 
@@ -106,7 +108,7 @@ def entry_point() -> int:
     app = QApplication(sys.argv)
     app.setApplicationDisplayName("Kotonoha")
     app.setQuitOnLastWindowClosed(False)  # overlay close should not kill the tray
-    app.setProperty("xdg_current_desktop", os.environ.get("XDG_CURRENT_DESKTOP", ""))
+    app.setProperty("xdg_current_desktop", current_desktop())
     app.setProperty("cli_port", args.port)
 
     loop = qasync.QEventLoop(app)
