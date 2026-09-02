@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import cast
 
-from PyQt6.QtCore import QEvent, QPoint, Qt
+from PyQt6.QtCore import QChildEvent, QEvent, QObject, QPoint, Qt
 from PyQt6.QtGui import (
     QCloseEvent,
     QColor,
@@ -76,6 +76,9 @@ class ThemedSettingsDialog(QDialog):
         # offer the resize themselves. Tracking is what makes the cursor change
         # before the reader presses, which is the only sign the edge is live.
         self.setMouseTracking(True)
+        # Filtering its own events is how the dialog hears ChildAdded and can
+        # follow the pointer into each control as the window is built up.
+        self.installEventFilter(self)
 
     def retheme(self, config: Config) -> None:
         """Adopt a newly applied theme without being closed and reopened.
@@ -158,6 +161,33 @@ class ThemedSettingsDialog(QDialog):
         """Drop the resize cursor when the pointer leaves the window."""
         self.unsetCursor()
         super().leaveEvent(a0)
+
+    def _follow_pointer_into(self, widget: QWidget) -> None:
+        """Hear about the pointer entering this widget and anything inside it."""
+        widget.installEventFilter(self)
+        for child in widget.findChildren(QWidget):
+            child.installEventFilter(self)
+
+    def eventFilter(self, a0: QObject | None, a1: QEvent | None) -> bool:
+        """Clear the edge cursor once the pointer is over a control instead.
+
+        The cursor is set on the dialog, and a child with no cursor of its own
+        inherits it. Moving from an edge straight into a control gives the dialog
+        no further mouse moves and does not leave the window, so nothing here ran
+        and the resize cursor stayed over ordinary controls and the title bar.
+        A child that has just been entered is the one thing that still knows.
+        """
+        if a1 is not None:
+            kind = a1.type()
+            if kind == QEvent.Type.Enter and a0 is not self:
+                self.unsetCursor()
+            elif kind == QEvent.Type.ChildAdded:
+                child = cast("QChildEvent", a1).child()
+                if isinstance(child, QWidget):
+                    # Watched as the window is built, not once at the end: the
+                    # pages are filled in long after the dialog exists.
+                    self._follow_pointer_into(child)
+        return super().eventFilter(a0, a1)
 
     def _paint_leaf_badge(self, badge: QLabel) -> None:
         """Tint the title-bar leaf with the accent now in effect.

@@ -1307,6 +1307,51 @@ def test_every_edge_of_a_frameless_window_offers_a_resize(qapp):
     assert dialog.hasMouseTracking()
 
 
+def test_the_resize_cursor_lets_go_when_the_pointer_reaches_a_control(qapp):
+    from PyQt6.QtCore import QEvent, QPointF, Qt
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtWidgets import QApplication, QListWidget
+
+    dialog = SettingsDialog(Config())
+    dialog.resize(700, 500)
+    dialog.show()
+    qapp.processEvents()
+
+    dialog.mouseMoveEvent(
+        QMouseEvent(
+            QEvent.Type.MouseMove,
+            QPointF(2, 250),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+    )
+    assert dialog.cursor().shape() is Qt.CursorShape.SizeHorCursor
+
+    child = dialog.findChild(QListWidget)
+    assert child is not None
+    # A control with no cursor of its own inherits the window's. Going from the
+    # edge straight into one gives the dialog no further moves and never leaves
+    # the window, so the resize cursor used to stay over ordinary controls.
+    QApplication.sendEvent(child, QEvent(QEvent.Type.Enter))
+    qapp.processEvents()
+    assert dialog.cursor().shape() is Qt.CursorShape.ArrowCursor
+    assert child.cursor().shape() is Qt.CursorShape.ArrowCursor
+
+    # The edge still offers the resize once the pointer goes back to it.
+    dialog.mouseMoveEvent(
+        QMouseEvent(
+            QEvent.Type.MouseMove,
+            QPointF(2, 250),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+    )
+    assert dialog.cursor().shape() is Qt.CursorShape.SizeHorCursor
+    dialog.close()
+
+
 def test_a_corner_says_which_way_it_stretches(qapp):
     from PyQt6.QtCore import Qt
 
