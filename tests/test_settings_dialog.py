@@ -1278,6 +1278,50 @@ def test_changing_the_theme_inside_settings_redraws_its_own_glyphs(qapp):
     assert _glyph_colour() != before
 
 
+def test_every_edge_of_a_frameless_window_offers_a_resize(qapp):
+    from PyQt6.QtCore import QPoint, Qt
+
+    dialog = SettingsDialog(Config())
+    dialog.resize(700, 500)
+
+    # A frameless window is given no borders to pull, so without this the window
+    # is stuck at the size it opened with: the compositor has nothing to grab.
+    corners = {
+        (2, 2): Qt.Edge.LeftEdge | Qt.Edge.TopEdge,
+        (697, 2): Qt.Edge.RightEdge | Qt.Edge.TopEdge,
+        (2, 497): Qt.Edge.LeftEdge | Qt.Edge.BottomEdge,
+        (697, 497): Qt.Edge.RightEdge | Qt.Edge.BottomEdge,
+        (350, 1): Qt.Edge.TopEdge,
+        (350, 498): Qt.Edge.BottomEdge,
+        (1, 250): Qt.Edge.LeftEdge,
+        (698, 250): Qt.Edge.RightEdge,
+    }
+    for (x, y), expected in corners.items():
+        assert dialog._resize_edges_at(QPoint(x, y)) == expected, (x, y)
+
+    # Inside the strip nothing resizes, or a drag meant for a control would.
+    assert dialog._resize_edges_at(QPoint(350, 250)) == Qt.Edge(0)
+    assert dialog._resize_edges_at(QPoint(20, 250)) == Qt.Edge(0)
+    # Tracking is what changes the cursor before the press, which is the only
+    # sign the edge is live at all.
+    assert dialog.hasMouseTracking()
+
+
+def test_a_corner_says_which_way_it_stretches(qapp):
+    from PyQt6.QtCore import Qt
+
+    dialog = SettingsDialog(Config())
+    # Falling corners share a diagonal, rising ones share the other: a cursor that
+    # points the wrong way says the window will move in a direction it will not.
+    assert dialog._resize_cursor(Qt.Edge.LeftEdge | Qt.Edge.TopEdge) is Qt.CursorShape.SizeFDiagCursor
+    assert dialog._resize_cursor(Qt.Edge.RightEdge | Qt.Edge.BottomEdge) is Qt.CursorShape.SizeFDiagCursor
+    assert dialog._resize_cursor(Qt.Edge.RightEdge | Qt.Edge.TopEdge) is Qt.CursorShape.SizeBDiagCursor
+    assert dialog._resize_cursor(Qt.Edge.LeftEdge | Qt.Edge.BottomEdge) is Qt.CursorShape.SizeBDiagCursor
+    assert dialog._resize_cursor(Qt.Edge.LeftEdge) is Qt.CursorShape.SizeHorCursor
+    assert dialog._resize_cursor(Qt.Edge.BottomEdge) is Qt.CursorShape.SizeVerCursor
+    assert dialog._resize_cursor(Qt.Edge(0)) is Qt.CursorShape.ArrowCursor
+
+
 def test_a_scroll_strip_paints_the_card_it_sits_in():
     from kotonoha.ui.settings import theme
 

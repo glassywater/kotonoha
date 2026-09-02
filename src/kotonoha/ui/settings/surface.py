@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import cast
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QEvent, QPoint, Qt
 from PyQt6.QtGui import (
     QCloseEvent,
     QColor,
@@ -25,6 +25,9 @@ from ...platform import OverlayPlatform, OverlayPlatformFactory, QtWindowHost, S
 from . import theme
 
 _RADIUS = 14
+# The strip along each edge that starts a resize. It has to stay inside the
+# outermost layout margin, or a drag meant for a control would resize instead.
+_RESIZE_MARGIN = 6
 logger = logging.getLogger(__name__)
 
 
@@ -69,6 +72,10 @@ class ThemedSettingsDialog(QDialog):
         self._surface_style_ready = False
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        # A frameless window is given no borders to pull, so the edges have to
+        # offer the resize themselves. Tracking is what makes the cursor change
+        # before the reader presses, which is the only sign the edge is live.
+        self.setMouseTracking(True)
 
     def retheme(self, config: Config) -> None:
         """Adopt a newly applied theme without being closed and reopened.
@@ -99,6 +106,58 @@ class ThemedSettingsDialog(QDialog):
         old palette survives a theme change looking inverted against the text
         beside it, which is the one part of the window that did not follow.
         """
+
+    def _resize_edges_at(self, point: QPoint) -> Qt.Edge:
+        """Return the edges a press at this point would pull.
+
+        Frameless windows lose the compositor's own borders, so the edge a drag
+        belongs to is decided here and handed back to the compositor, which then
+        owns the drag itself.
+        """
+        edges = Qt.Edge(0)
+        if point.x() <= _RESIZE_MARGIN:
+            edges |= Qt.Edge.LeftEdge
+        elif point.x() >= self.width() - _RESIZE_MARGIN - 1:
+            edges |= Qt.Edge.RightEdge
+        if point.y() <= _RESIZE_MARGIN:
+            edges |= Qt.Edge.TopEdge
+        elif point.y() >= self.height() - _RESIZE_MARGIN - 1:
+            edges |= Qt.Edge.BottomEdge
+        return edges
+
+    def _resize_cursor(self, edges: Qt.Edge) -> Qt.CursorShape:
+        """Name the cursor that says which way this edge moves."""
+        horizontal = bool(edges & (Qt.Edge.LeftEdge | Qt.Edge.RightEdge))
+        vertical = bool(edges & (Qt.Edge.TopEdge | Qt.Edge.BottomEdge))
+        if horizontal and vertical:
+            falling = bool(edges & Qt.Edge.LeftEdge) == bool(edges & Qt.Edge.TopEdge)
+            return Qt.CursorShape.SizeFDiagCursor if falling else Qt.CursorShape.SizeBDiagCursor
+        if horizontal:
+            return Qt.CursorShape.SizeHorCursor
+        if vertical:
+            return Qt.CursorShape.SizeVerCursor
+        return Qt.CursorShape.ArrowCursor
+
+    def mouseMoveEvent(self, a0: QMouseEvent | None) -> None:
+        """Show which edge is under the pointer before it is pressed."""
+        if a0 is not None:
+            self.setCursor(self._resize_cursor(self._resize_edges_at(a0.position().toPoint())))
+        super().mouseMoveEvent(a0)
+
+    def mousePressEvent(self, a0: QMouseEvent | None) -> None:
+        """Hand a press on an edge to the compositor as a resize."""
+        if a0 is not None and a0.button() == Qt.MouseButton.LeftButton:
+            edges = self._resize_edges_at(a0.position().toPoint())
+            handle = self.windowHandle()
+            if edges != Qt.Edge(0) and handle is not None and handle.startSystemResize(edges):
+                a0.accept()
+                return
+        super().mousePressEvent(a0)
+
+    def leaveEvent(self, a0: QEvent | None) -> None:
+        """Drop the resize cursor when the pointer leaves the window."""
+        self.unsetCursor()
+        super().leaveEvent(a0)
 
     def _paint_leaf_badge(self, badge: QLabel) -> None:
         """Tint the title-bar leaf with the accent now in effect.
