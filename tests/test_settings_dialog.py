@@ -1174,15 +1174,24 @@ def test_the_source_list_shows_what_will_be_saved(qapp) -> None:
 
 
 def test_every_skin_styles_the_internal_scrollbar_container():
-    from kotonoha.ui.settings.theme import _popup_skin, _skin
+    from kotonoha.ui.settings.theme import _popup_skin, _rgba_parts, _skin
 
-    for qss in (_skin(Config().accent_start), _popup_skin(Config().accent_start)):
+    # The container is a child widget over the panel it belongs to. Left to the
+    # platform it paints the desktop scheme's own colour; told to be see-through
+    # it erases the panel underneath instead, which on a translucent window is a
+    # black bar. Either way the skin has to name a colour for it.
+    for qss, opaque_popup in ((_skin(Config().accent_start), False), (_popup_skin(Config().accent_start), True)):
         rule = next(
             (line for line in qss.splitlines() if "qt_scrollarea_vcontainer" in line),
             None,
         )
         assert rule is not None
-        assert "background: transparent" in rule
+        if opaque_popup:
+            # A combo popup is its own opaque window, so nothing shows through it.
+            assert "background: transparent" in rule
+        else:
+            value = rule.split("background:", 1)[1].rstrip(" };")
+            assert _rgba_parts(value)[3] > 0, rule
 
 
 def test_eliding_label_shrinks_instead_of_widening_its_parent(qapp):
@@ -1267,6 +1276,37 @@ def test_changing_the_theme_inside_settings_redraws_its_own_glyphs(qapp):
     # This window restyles itself on apply instead of going through retheme(), and
     # that path forgot the icons: the sidebar kept white glyphs on a white surface.
     assert _glyph_colour() != before
+
+
+def test_a_scroll_strip_paints_the_card_it_sits_in():
+    from kotonoha.ui.settings import theme
+
+    # A scroll area's container is a child widget: given a see-through background
+    # it erases the card painted under it instead of letting it show, leaving a
+    # bar of bare window that reads as solid black on a translucent one.
+    for name in ("light", "dark"):
+        for frosted in (False, True):
+            track = theme._scroll_track_background(name, frosted, 0.8)
+            assert theme._rgba_parts(track)[3] > 0, (name, frosted, track)
+            skin = theme._skin("#FF5EB5", name, frosted, 0.8)
+            assert "qt_scrollarea_vcontainer" in skin
+            for rule in skin.splitlines():
+                if "qt_scrollarea_vcontainer" in rule or rule.startswith("QScrollBar:vertical"):
+                    assert "transparent" not in rule, rule
+
+
+def test_the_scroll_strip_matches_the_two_layers_it_replaces():
+    from kotonoha.ui.settings import theme
+
+    # It stands in for the card over the window, so it has to be their composite:
+    # anything else is a strip of a different colour down the edge of the panel.
+    card = theme._rgba_parts(theme._card_background("light", False, 0.8))
+    window = theme._PALETTES["light"]["window_bg"]
+    assert isinstance(window, tuple)
+    top, bottom = card[3] / 255, 0.8
+    expected_alpha = round((top + bottom * (1 - top)) * 255)
+    track = theme._rgba_parts(theme._scroll_track_background("light", False, 0.8))
+    assert track[3] == expected_alpha, (track, expected_alpha)
 
 
 def test_a_dropdown_row_is_selected_in_the_accent_not_the_desktop_colour(qapp):

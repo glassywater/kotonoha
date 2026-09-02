@@ -56,9 +56,9 @@ QListWidget#nav::item:selected { color: %TEXT_STRONG%; background: transparent; 
 QWidget#contentCard { background: %CARD_BG%; border: 1px solid %CARD_BORDER%; border-radius: 12px; }
 QScrollArea#settingsPageScroll { background: transparent; border: none; }
 QScrollArea#settingsPageScroll > QWidget#qt_scrollarea_viewport { background: transparent; border: none; }
-QWidget#qt_scrollarea_vcontainer, QWidget#qt_scrollarea_hcontainer { background: transparent; }
+QWidget#qt_scrollarea_vcontainer, QWidget#qt_scrollarea_hcontainer { background: %SCROLL_TRACK%; }
 QScrollBar:vertical {
-    background: transparent;
+    background: %SCROLL_TRACK%;
     width: 9px;
     margin: 8px 2px;
 }
@@ -287,6 +287,42 @@ def _card_background(theme: str, frosted: bool = False, opacity: float = 1.0) ->
     return value
 
 
+def _rgba_parts(value: str) -> tuple[int, int, int, int]:
+    """Read a token as red, green, blue and alpha, whichever form it is written in."""
+    text = value.strip()
+    if text.startswith("rgba(") and text.endswith(")"):
+        parts = [int(float(part)) for part in text[5:-1].split(",")]
+        return parts[0], parts[1], parts[2], parts[3]
+    colour = QColor(text)
+    if not colour.isValid():
+        raise ValueError(f"theme colour is not a colour: {value}")
+    return colour.red(), colour.green(), colour.blue(), colour.alpha()
+
+
+def _scroll_track_background(theme: str, frosted: bool, opacity: float) -> str:
+    """Return what a scroll area's own strip has to paint to disappear into its card.
+
+    A scroll area's container is a child widget: given a see-through background it
+    erases the card painted under it instead of letting it show, leaving a bar of
+    bare window — black on a translucent window. Painting the card over the window
+    here puts the same two layers back in the one place that lost them, and keeps
+    the alpha, so the compositor still blurs behind the strip.
+    """
+    card = _rgba_parts(_card_background(theme, frosted, opacity))
+    base = _PALETTES.get(theme, _PALETTES["dark"])["window_bg"]
+    if not isinstance(base, tuple):
+        raise TypeError("theme window background must be a tuple")
+    window = (base[0], base[1], base[2], max(0, min(255, round(255 * opacity))))
+    top, bottom = card[3] / 255, window[3] / 255
+    out = top + bottom * (1 - top)
+    if out <= 0:
+        return "rgba(0, 0, 0, 0)"
+    mixed = tuple(
+        round((card[i] * top + window[i] * bottom * (1 - top)) / out) for i in range(3)
+    )
+    return f"rgba({mixed[0]}, {mixed[1]}, {mixed[2]}, {round(out * 255)})"
+
+
 def _skin(accent: str, theme: str = "dark", frosted: bool = False, opacity: float = 1.0) -> str:
     """Fill the QSS template from the theme palette, accent colour and checkmark.
     When `frosted`, the content card is made translucent so the KWin backdrop-blur
@@ -296,6 +332,7 @@ def _skin(accent: str, theme: str = "dark", frosted: bool = False, opacity: floa
     so its window fill — painted in paintEvent — carries the effect)."""
     palette = dict(_PALETTES.get(theme, _PALETTES["dark"]))
     palette["CARD_BG"] = _card_background(theme, frosted, opacity)
+    palette["SCROLL_TRACK"] = _scroll_track_background(theme, frosted, opacity)
     qss = _QSS
     for token, value in palette.items():
         if isinstance(value, str):
