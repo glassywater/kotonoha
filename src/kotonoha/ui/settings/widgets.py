@@ -118,25 +118,39 @@ def _skin_combo_popup(combo: QComboBox, skin: PopupSkin) -> None:
         popup.setStyleSheet(skin.stylesheet)
 
 
-def _paint_combo_rows(
-    combo: QComboBox, skin: PopupSkin | None, font_preview: bool
-) -> ComboItemDelegate | None:
-    """Install the delegate that draws this popup's selected row, and return it.
+def _row_painter_for(
+    combo: QComboBox, skin: PopupSkin, previous: ComboItemDelegate | None, *, font_preview: bool
+) -> ComboItemDelegate:
+    """Build the one delegate this combo paints its rows with, dropping any earlier one.
 
     A platform style paints the item panel from the desktop colour scheme and
     reads neither `::item:selected` nor the palette highlight, so on KDE every
-    dropdown lit up in the system blue while the window carried the accent. The
-    container is built inside showPopup(), so the delegate has to be installed
-    after that call rather than once at construction — and the caller has to keep
-    the returned object, which a view does not own.
+    dropdown lit up in the system blue while the window carried the accent.
+
+    One per combo, not one per open: `setItemDelegate` does not delete the
+    delegate it replaces, so building a fresh one on every `showPopup` left every
+    previous one alive and parented — twenty opens, twenty delegates. The combo
+    is the parent rather than the view for the same reason it keeps the
+    reference: the view neither owns the delegate nor outlives every rebuild of
+    the popup it belongs to.
+    """
+    if previous is not None:
+        previous.setParent(None)
+        previous.deleteLater()
+    factory = FontNameDelegate if font_preview else ComboItemDelegate
+    return factory(skin.accent, skin.text, skin.on_accent, combo)
+
+
+def _paint_combo_rows(combo: QComboBox, delegate: ComboItemDelegate | None) -> None:
+    """Put this combo's row painter back on the view its popup was just built with.
+
+    The container is built inside `showPopup`, so the delegate has to be
+    installed after that call rather than once at construction.
     """
     view = combo.view()
-    if skin is None or view is None:
-        return None
-    factory = FontNameDelegate if font_preview else ComboItemDelegate
-    delegate = factory(skin.accent, skin.text, skin.on_accent, view)
+    if delegate is None or view is None or view.itemDelegate() is delegate:
+        return
     view.setItemDelegate(delegate)
-    return delegate
 
 
 class SettingsComboBox(QComboBox):
@@ -153,12 +167,13 @@ class SettingsComboBox(QComboBox):
         """Adopt the colours this window's popups are drawn in."""
         self._popup_skin = skin
         _skin_combo_popup(self, skin)
+        self._row_delegate = _row_painter_for(self, skin, self._row_delegate, font_preview=False)
 
     def showPopup(self) -> None:
         """Open the popup, then paint its rows and constrain its frame."""
         super().showPopup()
         _constrain_combo_popup(self)
-        self._row_delegate = _paint_combo_rows(self, self._popup_skin, font_preview=False)
+        _paint_combo_rows(self, self._row_delegate)
 
 
 class SettingsFontComboBox(QFontComboBox):
@@ -174,12 +189,13 @@ class SettingsFontComboBox(QFontComboBox):
         """Adopt the colours this window's popups are drawn in."""
         self._popup_skin = skin
         _skin_combo_popup(self, skin)
+        self._row_delegate = _row_painter_for(self, skin, self._row_delegate, font_preview=True)
 
     def showPopup(self) -> None:
         """Open the font list, then preview each family and constrain the frame."""
         super().showPopup()
         _constrain_combo_popup(self)
-        self._row_delegate = _paint_combo_rows(self, self._popup_skin, font_preview=True)
+        _paint_combo_rows(self, self._row_delegate)
 
 
 class IconStrip(QListWidget):

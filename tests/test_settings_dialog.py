@@ -1446,6 +1446,32 @@ def test_a_dropdown_keeps_its_row_painter_across_reopening(qapp):
         combo.hidePopup()
 
 
+def test_a_dropdown_keeps_one_row_painter_however_often_it_is_opened(qapp):
+    from PyQt6.QtWidgets import QComboBox
+
+    from kotonoha.ui.settings.delegates import ComboItemDelegate
+
+    dialog = SettingsDialog(Config(theme=ThemeMode.LIGHT, accent_start="#FF5EB5"))
+    combo = dialog.form_widgets.theme_combo
+
+    for _ in range(20):
+        combo.showPopup()
+        combo.hidePopup()
+
+    # setItemDelegate does not delete the delegate it replaces. Building a fresh
+    # one on every open therefore left every previous one alive and parented for
+    # as long as the window was: twenty opens, twenty delegates.
+    assert len(combo.findChildren(ComboItemDelegate)) == 1
+    view = combo.view()
+    assert view is not None
+    assert view.findChildren(ComboItemDelegate) == []
+    # ...and the one that survived is still the one doing the painting.
+    assert view.itemDelegate() is combo.findChildren(ComboItemDelegate)[0]
+    # Every other combo in the window is on the same footing, opened or not.
+    for other in dialog.findChildren(QComboBox):
+        assert len(other.findChildren(ComboItemDelegate)) <= 1, other.objectName()
+
+
 def test_the_cache_window_leaf_follows_an_applied_accent(qapp):
     from kotonoha.ui.settings.cache_dialog import LyricsCacheDialog
 
