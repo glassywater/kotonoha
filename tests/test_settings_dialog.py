@@ -1333,10 +1333,58 @@ def test_a_scroll_strip_paints_the_card_it_sits_in():
             track = theme._scroll_track_background(name, frosted, 0.8)
             assert theme._rgba_parts(track)[3] > 0, (name, frosted, track)
             skin = theme._skin("#FF5EB5", name, frosted, 0.8)
-            assert "qt_scrollarea_vcontainer" in skin
-            for rule in skin.splitlines():
-                if "qt_scrollarea_vcontainer" in rule or rule.startswith("QScrollBar:vertical"):
-                    assert "transparent" not in rule, rule
+            container = next(
+                (rule for rule in skin.splitlines() if "qt_scrollarea_vcontainer" in rule), None
+            )
+            assert container is not None
+            assert track in container, container
+            # The bar is a child of that container, so a second declaration of the
+            # same half-transparent colour is blended over the first: exactly one
+            # of the two nested widgets may name it.
+            assert skin.count(track) == 1, skin
+
+
+def test_the_scroll_rail_renders_as_one_colour_across_its_width(qapp):
+    from PyQt6.QtCore import QPoint, Qt
+    from PyQt6.QtGui import QImage, QPainter
+    from PyQt6.QtWidgets import QScrollArea
+
+    dialog = SettingsDialog(Config(theme=ThemeMode.DARK, accent_start="#FF5EB5", settings_opacity=0.8))
+    dialog.resize(760, 380)
+    dialog.show()
+    qapp.processEvents()
+    for area in dialog.findChildren(QScrollArea, "settingsPageScroll"):
+        area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+    qapp.processEvents()
+    bar = None
+    for area in dialog.findChildren(QScrollArea, "settingsPageScroll"):
+        candidate = area.verticalScrollBar()
+        if candidate is not None and candidate.isVisible():
+            bar = candidate
+            break
+    assert bar is not None
+    # A short handle parked at the top leaves the groove below it on show; with a
+    # handle as long as the bar there is no groove to look at.
+    bar.setRange(0, 10_000)
+    bar.setValue(0)
+    qapp.processEvents()
+
+    image = QImage(dialog.size(), QImage.Format.Format_ARGB32)
+    image.fill(0)
+    painter = QPainter(image)
+    dialog.render(painter)
+    painter.end()
+
+    left = bar.mapTo(dialog, QPoint(0, bar.height() - 20))
+    # Inside the rail, not its outermost pixel: that one is the card's own edge.
+    across = {image.pixelColor(left.x() + step, left.y()).name() for step in range(1, bar.width() - 1)}
+
+    # The bar sits inside the container that already paints the strip. Naming the
+    # same half-transparent colour on both blends it twice, and the groove comes
+    # out a different colour from the margin either side of it — a stripe down
+    # the middle of the rail, which is what a reader sees as a darker scrollbar.
+    assert len(across) == 1, across
+    dialog.close()
 
 
 def test_the_scroll_strip_matches_the_two_layers_it_replaces():

@@ -58,7 +58,10 @@ QScrollArea#settingsPageScroll { background: transparent; border: none; }
 QScrollArea#settingsPageScroll > QWidget#qt_scrollarea_viewport { background: transparent; border: none; }
 QWidget#qt_scrollarea_vcontainer, QWidget#qt_scrollarea_hcontainer { background: %SCROLL_TRACK%; }
 QScrollBar:vertical {
-    background: %SCROLL_TRACK%;
+    /* The container above already paints the strip. The bar sits inside it, so
+       painting the same half-transparent colour here composites it twice and the
+       rail comes out darker than the card it is supposed to disappear into. */
+    background: transparent;
     width: 9px;
     margin: 8px 2px;
 }
