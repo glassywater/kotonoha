@@ -20,7 +20,6 @@ from PyQt6.QtWidgets import (
 from ...config import ACCENT_PRESETS, LEAD_MS_LIMIT, Config
 from ...strings import UI_LANGUAGES, Translator
 from .controls import OpacityKey, PanelOpacityState, SettingsWidgets
-from .delegates import FontNameDelegate
 from .icons import SettingsIconPageBuilder
 from .sources import SettingsSourcesPageBuilder
 from .widgets import available_font_styles, resolve_font_family
@@ -124,7 +123,6 @@ class SettingsPageBuilder:
         page, form = self._form_page()
         w.font_family.setEditable(False)
         w.font_family.setIconSize(QSize(0, 0))
-        w.font_family.setItemDelegate(FontNameDelegate(w.font_family))
         w.font_family_shown = resolve_font_family(self._config.font_family)
         w.font_family_configured = self._config.font_family
         w.font_family.setCurrentFont(QFont(w.font_family_shown))

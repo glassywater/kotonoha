@@ -6,8 +6,8 @@ theme change has to reach it directly: reapplying a stylesheet does not.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QModelIndex, QRect, Qt
-from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPainter
+from PyQt6.QtCore import QModelIndex, QRect, QRectF, Qt
+from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPalette
 from PyQt6.QtWidgets import (
     QStyle,
     QStyledItemDelegate,
@@ -16,6 +16,14 @@ from PyQt6.QtWidgets import (
 )
 
 from .lyrics_search_model import VERSION_LABEL_ROLE
+
+# The popup's own item metrics, so a painted row lines up with the padding the
+# skin gives every other row in the same list.
+_COMBO_ITEM_RADIUS = 5.0
+_COMBO_ITEM_INSET = 2
+# Hover is the text colour worn thin, the way the nav rows do it. A token here
+# would have to be Qt's rgba() form, which QColor does not parse at all.
+_COMBO_HOVER_ALPHA = 26
 
 _CELL_PADDING = 8
 
@@ -227,7 +235,61 @@ class SelectionBarDelegate(QStyledItemDelegate):
             left += width + _CHIP_GAP
         painter.restore()
 
-class FontNameDelegate(QStyledItemDelegate):
+class ComboItemDelegate(QStyledItemDelegate):
+    """Paint a dropdown row's own selection, because the platform style will not.
+
+    Breeze draws the item panel from the desktop colour scheme and reads neither
+    `::item:selected` nor the palette highlight, so on KDE every popup row lit up
+    in the system blue while the window around it carried the accent. Painting
+    here and then handing the row on without its selected state is the only way
+    to keep one colour: a style that insists on drawing the highlight cannot be
+    told a different colour, only prevented from being asked.
+    """
+
+    def __init__(
+        self,
+        accent: str,
+        text: str,
+        on_accent: str,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._accent = QColor(accent)
+        self._text = QColor(text)
+        self._on_accent = QColor(on_accent)
+        self._hover = QColor(text)
+        self._hover.setAlpha(_COMBO_HOVER_ALPHA)
+
+    def paint(self, painter: QPainter | None, option: QStyleOptionViewItem, index: QModelIndex) -> None:
+        """Fill the row, then draw it as if nothing were selected."""
+        row = QStyleOptionViewItem(option)
+        self.initStyleOption(row, index)
+        selected = bool(row.state & QStyle.StateFlag.State_Selected)
+        hovered = bool(row.state & QStyle.StateFlag.State_MouseOver)
+        # Stripped before the row is handed on, so the style has no highlight to
+        # draw over the one just painted.
+        row.state &= ~QStyle.StateFlag.State_Selected
+        row.state &= ~QStyle.StateFlag.State_MouseOver
+        if painter is not None and (selected or hovered):
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(self._accent if selected else self._hover)
+            painter.drawRoundedRect(
+                QRectF(row.rect.adjusted(_COMBO_ITEM_INSET, 1, -_COMBO_ITEM_INSET, -1)),
+                _COMBO_ITEM_RADIUS,
+                _COMBO_ITEM_RADIUS,
+            )
+            painter.restore()
+        palette = row.palette
+        colour = self._on_accent if selected else self._text
+        for role in (QPalette.ColorRole.Text, QPalette.ColorRole.WindowText):
+            palette.setColor(role, colour)
+        row.palette = palette
+        super().paint(painter, row, index)
+
+
+class FontNameDelegate(ComboItemDelegate):
     """Preview each font family in its own face in the combo popup."""
 
     def initStyleOption(self, option: QStyleOptionViewItem | None, index: QModelIndex) -> None:
@@ -240,6 +302,7 @@ class FontNameDelegate(QStyledItemDelegate):
 
 __all__ = [
     "NAV_GUTTER",
+    "ComboItemDelegate",
     "FontNameDelegate",
     "NavIndicatorDelegate",
     "SelectionBarDelegate",

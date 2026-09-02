@@ -52,6 +52,7 @@ from .form_state import SettingsFormState
 from .icons import selected_icon_name
 from .pages import SettingsPageBuilder
 from .surface import SettingsTitleBar, ThemedSettingsDialog
+from .widgets import PopupSkin
 
 _CHECKMARK_PATH = theme._CHECKMARK_PATH
 _PALETTES = theme._PALETTES
@@ -139,6 +140,10 @@ class SettingsDialog(ThemedSettingsDialog):
             item = QListWidgetItem(nav_icon(key, self._nav_glyph()), self._translator.text(key))
             self._nav.addItem(item)
             self._stack.addWidget(self._scroll_page(builder()))
+        # After the pages exist, not before: a combo resets its item delegate when
+        # the page builder gives it a model, so styling the popups at surface time
+        # reached views that were then handed a default delegate again.
+        self._apply_combo_popup_styles()
         self._nav.setCurrentRow(0)
         self._stack.setCurrentIndex(0)
         self._nav.currentRowChanged.connect(self._stack.setCurrentIndex)
@@ -233,9 +238,21 @@ class SettingsDialog(ThemedSettingsDialog):
         self._apply_combo_popup_styles()
 
     def _apply_combo_popup_styles(self) -> None:
-        """Apply theme rules directly to popup views that live outside this dialog."""
-        popup_style = theme._popup_skin(self._accent, self._theme)
-        combos = (
+        """Hand every dropdown the skin its popup should wear.
+
+        The popup itself is dressed by the combo, not here: a combo rebuilds its
+        popup container, so anything applied to the view at this point is gone by
+        the time the list opens.
+        """
+        palette = theme._PALETTES[self._theme]
+        skin = PopupSkin(
+            stylesheet=theme._popup_skin(self._accent, self._theme),
+            background=theme._popup_background(self._theme),
+            accent=self._accent,
+            text=str(palette["TEXT"]),
+            on_accent=str(palette["GLYPH_ON_ACCENT"]),
+        )
+        for combo in (
             self._widgets.ui_language,
             self._widgets.theme_combo,
             self._widgets.font_family,
@@ -250,21 +267,8 @@ class SettingsDialog(ThemedSettingsDialog):
             self._widgets.interlude_countdown,
             self._widgets.anchor,
             self._widgets.player_combo,
-        )
-        for combo in combos:
-            view = combo.view()
-            if view is not None:
-                view.setObjectName("settingsComboPopup")
-                view.setStyleSheet(popup_style)
-                viewport = view.viewport()
-                if viewport is not None:
-                    viewport.setStyleSheet(
-                        f"background: {theme._popup_background(self._theme)};"
-                    )
-                popup = view.window()
-                if popup is not None and popup is not view:
-                    popup.setObjectName("settingsComboPopupFrame")
-                    popup.setStyleSheet(popup_style)
+        ):
+            combo.set_popup_skin(skin)
 
     def _title_bar(self) -> QWidget:
         title_bar = SettingsTitleBar()
@@ -484,6 +488,8 @@ class SettingsDialog(ThemedSettingsDialog):
             self._stack.removeWidget(old_page)
             old_page.deleteLater()
         self._stack.setCurrentIndex(idx)
+        # The rebuilt page carries new combos, which start with a default delegate.
+        self._apply_combo_popup_styles()
 
     def _emit(self) -> None:
         self._form_state.replace(self.current_config())

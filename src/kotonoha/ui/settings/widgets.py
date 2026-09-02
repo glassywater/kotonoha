@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Collection
+from dataclasses import dataclass
 
 from PyQt6.QtCore import QRectF, Qt, QTimer
 from PyQt6.QtGui import (
@@ -27,6 +28,20 @@ from PyQt6.QtWidgets import (
     QTableView,
     QWidget,
 )
+
+from .delegates import ComboItemDelegate, FontNameDelegate
+
+
+@dataclass(frozen=True, slots=True)
+class PopupSkin:
+    """Everything a dropdown popup needs to match the window that owns it."""
+
+    stylesheet: str
+    background: str
+    accent: str
+    text: str
+    on_accent: str
+
 
 FONT_FALLBACKS = (
     "Noto Sans CJK SC", "Noto Sans CJK TC", "Noto Sans CJK JP", "Source Han Sans SC",
@@ -82,21 +97,90 @@ def _constrain_combo_popup(combo: QComboBox) -> None:
     if popup is not None and popup is not view:
         popup.setFixedWidth(width)
 
+def _skin_combo_popup(combo: QComboBox, skin: PopupSkin) -> None:
+    """Give one combo's popup its colours, once per theme.
+
+    Not on every open: changing a view's stylesheet makes the combo schedule a
+    rebuild of its popup container, and that rebuild lands after showPopup()
+    returns — taking the item delegate installed in between with it.
+    """
+    view = combo.view()
+    if view is None:
+        return
+    view.setObjectName("settingsComboPopup")
+    view.setStyleSheet(skin.stylesheet)
+    viewport = view.viewport()
+    if viewport is not None:
+        viewport.setStyleSheet(f"background: {skin.background};")
+    popup = view.window()
+    if popup is not None and popup is not view:
+        popup.setObjectName("settingsComboPopupFrame")
+        popup.setStyleSheet(skin.stylesheet)
+
+
+def _paint_combo_rows(
+    combo: QComboBox, skin: PopupSkin | None, font_preview: bool
+) -> ComboItemDelegate | None:
+    """Install the delegate that draws this popup's selected row, and return it.
+
+    A platform style paints the item panel from the desktop colour scheme and
+    reads neither `::item:selected` nor the palette highlight, so on KDE every
+    dropdown lit up in the system blue while the window carried the accent. The
+    container is built inside showPopup(), so the delegate has to be installed
+    after that call rather than once at construction — and the caller has to keep
+    the returned object, which a view does not own.
+    """
+    view = combo.view()
+    if skin is None or view is None:
+        return None
+    factory = FontNameDelegate if font_preview else ComboItemDelegate
+    delegate = factory(skin.accent, skin.text, skin.on_accent, view)
+    view.setItemDelegate(delegate)
+    return delegate
+
+
 class SettingsComboBox(QComboBox):
     """Combo box whose popup follows the stable width of its field."""
 
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._popup_skin: PopupSkin | None = None
+        # Retained: a view does not own the delegate it is given, so dropping the
+        # only reference here would put the platform's own painting back.
+        self._row_delegate: ComboItemDelegate | None = None
+
+    def set_popup_skin(self, skin: PopupSkin) -> None:
+        """Adopt the colours this window's popups are drawn in."""
+        self._popup_skin = skin
+        _skin_combo_popup(self, skin)
+
     def showPopup(self) -> None:
-        """Open the native popup, then constrain its content-sized frame."""
+        """Open the popup, then paint its rows and constrain its frame."""
         super().showPopup()
         _constrain_combo_popup(self)
+        self._row_delegate = _paint_combo_rows(self, self._popup_skin, font_preview=False)
+
 
 class SettingsFontComboBox(QFontComboBox):
     """Font picker with the same bounded popup policy as other settings combos."""
 
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._popup_skin: PopupSkin | None = None
+        # Retained for the same reason as the plain combo above.
+        self._row_delegate: ComboItemDelegate | None = None
+
+    def set_popup_skin(self, skin: PopupSkin) -> None:
+        """Adopt the colours this window's popups are drawn in."""
+        self._popup_skin = skin
+        _skin_combo_popup(self, skin)
+
     def showPopup(self) -> None:
-        """Open the font list, then constrain its content-sized frame."""
+        """Open the font list, then preview each family and constrain the frame."""
         super().showPopup()
         _constrain_combo_popup(self)
+        self._row_delegate = _paint_combo_rows(self, self._popup_skin, font_preview=True)
+
 
 class IconStrip(QListWidget):
     """Icon grid whose height follows the rows produced by Qt's layout."""
@@ -315,6 +399,7 @@ class ClearableLineEdit(QLineEdit):
         self._clear_action.setVisible(bool(text))
 
 __all__ = [
+    "PopupSkin",
     "ClearableLineEdit",
     "FONT_FALLBACKS",
     "ElidingLabel",

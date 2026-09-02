@@ -1269,6 +1269,51 @@ def test_changing_the_theme_inside_settings_redraws_its_own_glyphs(qapp):
     assert _glyph_colour() != before
 
 
+def test_a_dropdown_row_is_selected_in_the_accent_not_the_desktop_colour(qapp):
+    from PyQt6.QtCore import QRect
+    from PyQt6.QtGui import QImage, QPainter
+    from PyQt6.QtWidgets import QStyle, QStyleOptionViewItem
+
+    dialog = SettingsDialog(Config(theme=ThemeMode.LIGHT, accent_start="#FF5EB5"))
+    combo = dialog.form_widgets.theme_combo
+    combo.showPopup()
+    view = combo.view()
+    assert view is not None
+    delegate = view.itemDelegate()
+    assert delegate is not None
+
+    option = QStyleOptionViewItem()
+    option.rect = QRect(0, 0, 120, 26)
+    option.state = QStyle.StateFlag.State_Enabled | QStyle.StateFlag.State_Selected
+    image = QImage(120, 26, QImage.Format.Format_ARGB32)
+    image.fill(0xFFFFFFFF)
+    painter = QPainter(image)
+    model = view.model()
+    assert model is not None
+    delegate.paint(painter, option, model.index(1, 0))
+    painter.end()
+
+    # Breeze paints the item panel from the desktop colour scheme and reads
+    # neither `::item:selected` nor the palette highlight, so on KDE every
+    # dropdown lit up in the system blue while the window carried the accent.
+    assert "#ff5eb5" in {image.pixelColor(x, 13).name() for x in range(10, 110, 5)}
+
+
+def test_a_dropdown_keeps_its_row_painter_across_reopening(qapp):
+    dialog = SettingsDialog(Config(theme=ThemeMode.LIGHT, accent_start="#FF5EB5"))
+    combo = dialog.form_widgets.theme_combo
+
+    for _ in range(3):
+        combo.showPopup()
+        view = combo.view()
+        assert view is not None
+        # A view does not own the delegate it is given, and the combo rebuilds its
+        # popup container: without a reference held here the platform's own
+        # painting came back on the first open.
+        assert type(view.itemDelegate()).__name__ == "ComboItemDelegate"
+        combo.hidePopup()
+
+
 def test_the_cache_window_leaf_follows_an_applied_accent(qapp):
     from kotonoha.ui.settings.cache_dialog import LyricsCacheDialog
 
