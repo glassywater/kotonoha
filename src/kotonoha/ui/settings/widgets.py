@@ -121,7 +121,7 @@ def _skin_combo_popup(combo: QComboBox, skin: PopupSkin) -> None:
 def _row_painter_for(
     combo: QComboBox, skin: PopupSkin, previous: ComboItemDelegate | None, *, font_preview: bool
 ) -> ComboItemDelegate:
-    """Build the one delegate this combo paints its rows with, dropping any earlier one.
+    """Install this combo's row painter before retiring its earlier one.
 
     A platform style paints the item panel from the desktop colour scheme and
     reads neither `::item:selected` nor the palette highlight, so on KDE every
@@ -133,19 +133,26 @@ def _row_painter_for(
     is the parent rather than the view for the same reason it keeps the
     reference: the view neither owns the delegate nor outlives every rebuild of
     the popup it belongs to.
+
+    Qt sizes the popup using the installed delegate inside `showPopup`. Leaving
+    a deleted delegate there until after opening gives the list zero height.
+    This synchronous Qt boundary helper only swaps the painter; ownership and
+    persistent state stay with the combo, so a separate owner adds no lifecycle.
     """
+    factory = FontNameDelegate if font_preview else ComboItemDelegate
+    delegate = factory(skin.accent, skin.text, skin.on_accent, combo)
+    combo.setItemDelegate(delegate)
     if previous is not None:
         previous.setParent(None)
         previous.deleteLater()
-    factory = FontNameDelegate if font_preview else ComboItemDelegate
-    return factory(skin.accent, skin.text, skin.on_accent, combo)
+    return delegate
 
 
 def _paint_combo_rows(combo: QComboBox, delegate: ComboItemDelegate | None) -> None:
     """Put this combo's row painter back on the view its popup was just built with.
 
-    The container is built inside `showPopup`, so the delegate has to be
-    installed after that call rather than once at construction.
+    The painter is installed before opening so Qt can size the rows. Reapply it
+    afterward if building the popup container inside `showPopup` replaced it.
     """
     view = combo.view()
     if delegate is None or view is None or view.itemDelegate() is delegate:
