@@ -23,8 +23,11 @@ This document defines the models and behavior boundaries for lyric sources, pars
 The default lyric source order is:
 
 ```text
-netease -> lrclib -> kugou -> cider
+netease -> lrclib -> kugou
 ```
+
+Cider polling is opt-in: it starts only when `cider` is enabled in
+`lyrics_sources`. Existing saved source selections are preserved.
 
 `lyrics_sources` controls lyric providers. `display_sources` (default
 `mpris -> cider -> adapter`) controls playback facts and live lyric candidates;

@@ -623,12 +623,14 @@ async def test_mpris_resolution_keeps_a_paused_playback_observation():
     assert state.frame.current_time == 4.0
 
 
-async def test_cider_frame_can_take_over_after_a_late_external_miss(caplog):
+async def test_cider_frame_can_take_over_after_a_late_external_miss(caplog: pytest.LogCaptureFixture) -> None:
+    """An explicitly enabled Cider source can supply lyrics after a network miss."""
     caplog.set_level(logging.DEBUG)
     resolver = RecordingResolver()
     gate = SourceOwnershipCoordinator()
     state = LyricsState()
     coordinator = lyrics_coordinator(_display(state), resolver=resolver, ownership=gate)
+    coordinator.set_lyrics_sources(["netease", "lrclib", "kugou", "cider"])
     coordinator.on_playback_commit(track_commit(1))
     await resolver.started.wait()
 

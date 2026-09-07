@@ -1,4 +1,5 @@
 
+import pytest
 from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtWidgets import QApplication, QLabel
@@ -21,7 +22,12 @@ from kotonoha.ui.settings.lyrics_status import LyricsStatusBand
 
 _COLOURS = {c: "#888888" for c in MatchConfidence}
 
-def test_status_line_lists_only_source_names() -> None:
+@pytest.mark.parametrize(
+    ("language", "expected"),
+    [("zh-Hans", "QQ 音乐, Cider"), ("zh-Hant", "QQ 音樂, Cider"), ("ja", "QQ 音楽, Cider")],
+)
+def test_status_line_lists_only_source_names(language: str, expected: str) -> None:
+    """Localized source labels show the Cider name without a bundled qualifier."""
     # The reasons are sentences; joining them into the one-line footer is what
     # pushed the dialog wider than the screen and clipped the result count.
     from kotonoha.ui.settings.lyrics_search_model import format_unavailable_sources
@@ -31,12 +37,13 @@ def test_status_line_lists_only_source_names() -> None:
             LyricsSearchUnavailable("qqmusic", "search.unavailable.qqmusic"),
             LyricsSearchUnavailable("cider", "search.unavailable.cider"),
         ),
-        Translator("zh-Hans"),
+        Translator(language),
     )
 
-    assert formatted == "QQ 音乐, Cider 自带"
+    assert formatted == expected
 
 def test_status_tooltip_translates_every_reason() -> None:
+    """Unavailable reasons use localized descriptions and the plain Cider name."""
     # Reasons used to be English sentences pasted into a localized dialog.
     from kotonoha.ui.settings.lyrics_search_model import format_unavailable_details
 
@@ -48,7 +55,7 @@ def test_status_tooltip_translates_every_reason() -> None:
         Translator("zh-Hans"),
     )
 
-    assert detail == "QQ 音乐：不支持按元数据搜索，需精确歌曲 ID\nCider 自带：仅提供当前播放的曲目"
+    assert detail == "QQ 音乐：不支持按元数据搜索，需精确歌曲 ID\nCider：仅提供当前播放的曲目"
     # An untranslated key renders as itself, which is how the raw string would leak.
     assert "search.unavailable." not in detail
 

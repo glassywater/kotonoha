@@ -8,6 +8,7 @@ import pytest
 
 from kotonoha.app.display_coordinator import DisplayCoordinator
 from kotonoha.app.source_gate import SourceOwnershipCoordinator
+from kotonoha.config import Config
 from kotonoha.display.models import DisplayState
 from kotonoha.display.presentation import DisplayEngine
 from kotonoha.display.timeline import TimelineEngine
@@ -326,6 +327,35 @@ class _BlockingCiderClient(_FakeCiderClient):
         self.close_observed_lyrics_finished = self.lyrics_finished.is_set()
         self.close_called.set()
         await super().close()
+
+
+@pytest.mark.asyncio
+async def test_default_configuration_does_not_poll_cider_on_startup() -> None:
+    """Starting with fresh settings must not request Cider playback or lyrics."""
+    config = Config()
+    track = TrackIdentity("cider", "cider-api", "song-1", "Song", "Song", "Artist", "Album", None, 180.0)
+    observation = PlaybackObservation("cider", "cider-api", track, PlaybackStatus.PLAYING, 1.5, 180.0, 1.0)
+    document = CiderLyricsResponseAdapter().adapt(_lyrics_payload(), track=track, duration_s=180.0)
+    client = _FakeCiderClient(observation, document)
+    provider = CiderApiProvider(
+        display=_display(),
+        ownership=SourceOwnershipCoordinator(display_sources=config.display_sources),
+        client=client,
+        enabled="cider" in config.lyrics_sources,
+        poll_interval=60.0,
+    )
+    startup_turn = asyncio.Event()
+
+    await provider.start()
+    startup_callback = asyncio.get_running_loop().call_soon(startup_turn.set)
+    try:
+        await asyncio.wait_for(startup_turn.wait(), timeout=1.0)
+
+        assert not client.playback_called.is_set()
+        assert not client.lyrics_called.is_set()
+    finally:
+        startup_callback.cancel()
+        await provider.stop()
 
 
 @pytest.mark.asyncio

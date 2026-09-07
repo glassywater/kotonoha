@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # Lyric sources in priority order; first one with lyrics for the song wins.
 # "cider" = lyrics exposed by Cider's public API.
 VALID_LYRICS_SOURCES = ("netease", "lrclib", "kugou", "qqmusic", "cider")
-DEFAULT_LYRICS_SOURCES = ["netease", "lrclib", "kugou", "cider"]
+DEFAULT_LYRICS_SOURCES: list[str] = ["netease", "lrclib", "kugou"]
 
 # Display sources provide playback facts and a candidate lyric document. They
 # are ordered by preference independently from lyric lookup providers.

@@ -23,8 +23,11 @@
 默认歌词来源顺序为：
 
 ```text
-netease -> lrclib -> kugou -> cider
+netease -> lrclib -> kugou
 ```
+
+Cider 探测默认关闭，只有在 `lyrics_sources` 中启用 `cider` 后才开始轮询。
+已有配置中保存的来源选择会保留。
 
 `lyrics_sources` 控制歌词 provider；`display_sources`（默认
 `mpris -> cider -> adapter`）控制播放事实和实时歌词候选。两者是独立配置。

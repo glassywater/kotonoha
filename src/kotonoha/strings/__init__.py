@@ -234,7 +234,7 @@ STRINGS: dict[str, dict[str, str]] = {
     "src.netease": {"en": "Netease", "zh-Hans": "网易云", "zh-Hant": "網易雲", "ja": "网易云"},
     "src.lrclib": {"en": "lrclib", "zh-Hans": "lrclib", "zh-Hant": "lrclib", "ja": "lrclib"},
     "src.kugou": {"en": "Kugou", "zh-Hans": "酷狗", "zh-Hant": "酷狗", "ja": "酷狗（Kugou）"},
-    "src.cider": {"en": "Cider", "zh-Hans": "Cider 自带", "zh-Hant": "Cider 自帶", "ja": "Cider 内蔵"},
+    "src.cider": {"en": "Cider", "zh-Hans": "Cider", "zh-Hant": "Cider", "ja": "Cider"},
     "src.qqmusic": {"en": "QQ Music", "zh-Hans": "QQ 音乐", "zh-Hant": "QQ 音樂", "ja": "QQ 音楽"},
     "src.display.mpris": {"en": "MPRIS", "zh-Hans": "MPRIS", "zh-Hant": "MPRIS", "ja": "MPRIS"},
     "src.display.cider": {"en": "Cider API", "zh-Hans": "Cider API", "zh-Hant": "Cider API", "ja": "Cider API"},

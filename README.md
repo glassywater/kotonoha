@@ -113,7 +113,7 @@ uv run kotonoha
 
 ## Configuration
 
-Open **Settings** from the tray. Under **Sources**, lyric providers can be reordered or disabled. The default order is `netease -> lrclib -> kugou -> cider`. The display sources below it can also have multiple enabled entries; their order controls which live player source wins when MPRIS is unavailable.
+Open **Settings** from the tray. Under **Sources**, lyric providers can be reordered or disabled. The default order is `netease -> lrclib -> kugou`. The display sources below it can also have multiple enabled entries; their order controls which live player source wins when MPRIS is unavailable.
 
 **Prefer best match** is enabled by default: cached results and matching Cider snapshots are considered first, then network sources compete by match quality. Disable it for strict ordered fallback.
 
@@ -135,8 +135,9 @@ Settings also controls fonts, colors, opacity, position, translation, icons, pan
 ## Cider HTTP API (optional)
 
 The current Cider integration uses Cider's local HTTP API directly; no Cider
-plugin is required. Enable `cider` under **Settings -> Sources** when you want
-it in the lyric source order.
+plugin is required. Cider probing is disabled by default. Enable **Cider** in
+the lyric sources list under **Settings -> Sources** to start probing and add
+it to the lyric source order. Existing saved source selections are preserved.
 
 Kotonoha fetches the complete timed lyric document once per track from Cider,
 then calibrates playback position about once per second. The local media clock
