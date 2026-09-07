@@ -34,8 +34,10 @@ Install the optional `mutagen` dependency to read LRC lyrics embedded in local a
 
 Download the latest artifacts from [GitHub Releases](https://github.com/locez/kotonoha/releases).
 
-- Debian/Ubuntu: `sudo apt install ./kotonoha_*.deb`
-- Fedora: `sudo dnf install ./kotonoha-*.rpm`
+DEB, RPM, and Linux wheel packages are built for x86_64 and ARM64 (aarch64). DEB filenames use `amd64` / `arm64`; RPM and wheel filenames use `x86_64` / `aarch64`.
+
+- Debian/Ubuntu: `sudo apt install ./kotonoha_*_"$(dpkg --print-architecture)".deb`
+- Fedora: `sudo dnf install ./kotonoha-*."$(uname -m)".rpm`
 - Arch Linux: `paru -S kotonoha-git`
 
 For Gentoo, enable the [gentoo-zh overlay](https://github.com/gentoo-zh/overlay):
@@ -67,11 +69,11 @@ kotonoha
 
 ### Linux wheel
 
-The release wheel is for Linux x86_64 and still needs compatible system Qt, Wayland, and LayerShellQt runtime libraries. Install [`uv`](https://docs.astral.sh/uv/getting-started/installation/) first:
+The release wheels are for Linux x86_64 and ARM64 (aarch64) and still need compatible system Qt, Wayland, and LayerShellQt runtime libraries. Install [`uv`](https://docs.astral.sh/uv/getting-started/installation/) first:
 
 ```bash
 python3 -m venv .venv
-uv pip install --python .venv/bin/python ./kotonoha-*-linux_x86_64.whl
+uv pip install --python .venv/bin/python ./kotonoha-*-linux_"$(uname -m)".whl
 .venv/bin/kotonoha
 ```
 

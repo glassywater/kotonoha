@@ -1,3 +1,5 @@
+"""Collect one release package per format and architecture with SHA-256 checksums."""
+
 from __future__ import annotations
 
 import argparse
@@ -6,10 +8,13 @@ import shutil
 from collections.abc import Sequence
 from pathlib import Path
 
-ARTIFACT_PATTERNS = (
-    (".deb", "*.deb"),
-    (".rpm", "*.rpm"),
+ARTIFACT_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("amd64 .deb", "*_amd64.deb"),
+    ("arm64 .deb", "*_arm64.deb"),
+    ("x86_64 .rpm", "*.x86_64.rpm"),
+    ("aarch64 .rpm", "*.aarch64.rpm"),
     ("Linux x86_64 wheel", "*-linux_x86_64.whl"),
+    ("Linux aarch64 wheel", "*-linux_aarch64.whl"),
 )
 
 

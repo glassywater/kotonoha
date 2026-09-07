@@ -34,8 +34,10 @@ Kotonoha 支持浏览器、Spotify、VLC、mpv、Cider 以及其他兼容 MPRIS 
 
 从 [GitHub Releases](https://github.com/locez/kotonoha/releases) 下载最新构建产物。
 
-- Debian/Ubuntu：`sudo apt install ./kotonoha_*.deb`
-- Fedora：`sudo dnf install ./kotonoha-*.rpm`
+DEB、RPM 和 Linux wheel 均提供 x86_64 与 ARM64（aarch64）构建。DEB 文件名使用 `amd64` / `arm64`；RPM 和 wheel 文件名使用 `x86_64` / `aarch64`。
+
+- Debian/Ubuntu：`sudo apt install ./kotonoha_*_"$(dpkg --print-architecture)".deb`
+- Fedora：`sudo dnf install ./kotonoha-*."$(uname -m)".rpm`
 - Arch Linux：`paru -S kotonoha-git`
 
 Gentoo 用户可以启用 [gentoo-zh overlay](https://github.com/gentoo-zh/overlay)：
@@ -67,11 +69,11 @@ kotonoha
 
 ### Linux wheel
 
-Release wheel 面向 Linux x86_64，仍需要兼容的系统 Qt、Wayland 和 LayerShellQt 运行库。先安装 [`uv`](https://docs.astral.sh/uv/getting-started/installation/)：
+Release wheel 面向 Linux x86_64 和 ARM64（aarch64），仍需要兼容的系统 Qt、Wayland 和 LayerShellQt 运行库。先安装 [`uv`](https://docs.astral.sh/uv/getting-started/installation/)：
 
 ```bash
 python3 -m venv .venv
-uv pip install --python .venv/bin/python ./kotonoha-*-linux_x86_64.whl
+uv pip install --python .venv/bin/python ./kotonoha-*-linux_"$(uname -m)".whl
 .venv/bin/kotonoha
 ```
 

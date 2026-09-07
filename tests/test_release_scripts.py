@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import sys
 from pathlib import Path
 
@@ -11,6 +12,15 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 from scripts.assemble_release import assemble_release  # noqa: E402
 from scripts.release_version import main as release_version_main  # noqa: E402
 from scripts.release_version import resolve_version  # noqa: E402
+
+RELEASE_ARTIFACT_SUFFIXES: tuple[str, ...] = (
+    "_amd64.deb",
+    "_arm64.deb",
+    ".x86_64.rpm",
+    ".aarch64.rpm",
+    "-linux_x86_64.whl",
+    "-linux_aarch64.whl",
+)
 
 
 def write_project(path: Path, version: str) -> None:
@@ -102,10 +112,14 @@ def test_release_version_cli_appends_github_output(tmp_path: Path) -> None:
 
 
 def create_artifacts(artifacts_dir: Path) -> dict[str, bytes]:
+    """Write one package per format and architecture in separate job directories."""
     contents = {
-        "kotonoha_1.2.3_amd64.deb": b"deb package",
-        "kotonoha-1.2.3-1.x86_64.rpm": b"rpm package",
-        "kotonoha-1.2.3-linux_x86_64.whl": b"python wheel",
+        "kotonoha_1.2.3-1_amd64.deb": b"amd64 deb package",
+        "kotonoha_1.2.3-1_arm64.deb": b"arm64 deb package",
+        "kotonoha-1.2.3-1.x86_64.rpm": b"x86_64 rpm package",
+        "kotonoha-1.2.3-1.aarch64.rpm": b"aarch64 rpm package",
+        "kotonoha-1.2.3-py3-none-linux_x86_64.whl": b"x86_64 python wheel",
+        "kotonoha-1.2.3-py3-none-linux_aarch64.whl": b"aarch64 python wheel",
     }
     for index, (filename, content) in enumerate(contents.items()):
         artifact_path = artifacts_dir / f"job-{index}" / filename
@@ -114,7 +128,8 @@ def create_artifacts(artifacts_dir: Path) -> dict[str, bytes]:
     return contents
 
 
-def test_assemble_release_copies_three_artifacts_and_writes_checksums(tmp_path: Path) -> None:
+def test_assemble_release_copies_both_architectures_and_writes_checksums(tmp_path: Path) -> None:
+    """A complete release contains all six packages with deterministic checksums."""
     artifacts_dir = tmp_path / "artifacts"
     output_dir = tmp_path / "release"
     contents = create_artifacts(artifacts_dir)
@@ -125,7 +140,7 @@ def test_assemble_release_copies_three_artifacts_and_writes_checksums(tmp_path: 
     assert copied == tuple(output_dir / filename for filename in sorted(contents))
     assert {path.name: path.read_bytes() for path in copied} == contents
     checksum_lines = (output_dir / "SHA256SUMS").read_text(encoding="utf-8").splitlines()
-    assert len(checksum_lines) == 3
+    assert len(checksum_lines) == 6
     assert checksum_lines == [
         f"{hashlib.sha256(contents[filename]).hexdigest()}  {filename}" for filename in sorted(contents)
     ]
@@ -146,37 +161,53 @@ def test_assemble_release_rejects_non_empty_output_without_mutating_it(tmp_path:
     assert stale_path.read_bytes() == b"stale"
 
 
-def test_assemble_release_rejects_duplicate_deb(tmp_path: Path) -> None:
+@pytest.mark.parametrize("suffix", RELEASE_ARTIFACT_SUFFIXES)
+def test_assemble_release_rejects_duplicate_format_and_architecture(tmp_path: Path, suffix: str) -> None:
+    """Two packages for the same format and architecture prevent publication."""
     artifacts_dir = tmp_path / "artifacts"
+    output_dir = tmp_path / "release"
     create_artifacts(artifacts_dir)
-    duplicate = artifacts_dir / "another-job" / "other.deb"
+    artifact_path = next(artifacts_dir.rglob(f"*{suffix}"))
+    duplicate = artifacts_dir / "another-job" / artifact_path.name
     duplicate.parent.mkdir()
-    duplicate.write_bytes(b"another deb")
+    duplicate.write_bytes(b"another package")
 
-    with pytest.raises(ValueError, match=r"exactly one.*\.deb"):
-        assemble_release(artifacts_dir, tmp_path / "release")
+    with pytest.raises(ValueError, match=rf"{re.escape(suffix)}.*found 2"):
+        assemble_release(artifacts_dir, output_dir)
+
+    assert not output_dir.exists()
 
 
-def test_assemble_release_rejects_symlinked_artifact(tmp_path: Path) -> None:
+@pytest.mark.parametrize("suffix", RELEASE_ARTIFACT_SUFFIXES)
+def test_assemble_release_rejects_symlinked_artifact(tmp_path: Path, suffix: str) -> None:
+    """A symlink cannot substitute for a package of either architecture."""
     artifacts_dir = tmp_path / "artifacts"
+    output_dir = tmp_path / "release"
     create_artifacts(artifacts_dir)
-    deb_path = next(artifacts_dir.rglob("*.deb"))
-    deb_path.unlink()
-    symlink_target = tmp_path / "external-deb"
+    artifact_path = next(artifacts_dir.rglob(f"*{suffix}"))
+    artifact_path.unlink()
+    symlink_target = tmp_path / "external-package"
     symlink_target.write_bytes(b"external")
     try:
-        deb_path.symlink_to(symlink_target)
+        artifact_path.symlink_to(symlink_target)
     except (NotImplementedError, OSError) as error:
         pytest.skip(f"cannot create symlinks on this platform: {error}")
 
-    with pytest.raises(ValueError, match=r"exactly one.*\.deb.*found 0"):
-        assemble_release(artifacts_dir, tmp_path / "release")
+    with pytest.raises(ValueError, match=rf"{re.escape(suffix)}.*found 0"):
+        assemble_release(artifacts_dir, output_dir)
+
+    assert not output_dir.exists()
 
 
-def test_assemble_release_rejects_missing_artifact_class(tmp_path: Path) -> None:
+@pytest.mark.parametrize("suffix", RELEASE_ARTIFACT_SUFFIXES)
+def test_assemble_release_rejects_missing_format_and_architecture(tmp_path: Path, suffix: str) -> None:
+    """A missing package must fail even when its other architecture is present."""
     artifacts_dir = tmp_path / "artifacts"
+    output_dir = tmp_path / "release"
     create_artifacts(artifacts_dir)
-    next(artifacts_dir.rglob("*.rpm")).unlink()
+    next(artifacts_dir.rglob(f"*{suffix}")).unlink()
 
-    with pytest.raises(ValueError, match=r"exactly one.*\.rpm"):
-        assemble_release(artifacts_dir, tmp_path / "release")
+    with pytest.raises(ValueError, match=rf"{re.escape(suffix)}.*found 0"):
+        assemble_release(artifacts_dir, output_dir)
+
+    assert not output_dir.exists()

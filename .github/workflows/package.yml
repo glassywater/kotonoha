@@ -40,17 +40,26 @@ jobs:
             --github-output "$GITHUB_OUTPUT"
 
   deb:
-    name: Build DEB
+    name: Build DEB (${{ matrix.arch }})
     needs:
       - validate
       - version
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     container: ubuntu:26.04
     defaults:
       run:
         shell: bash
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      PACKAGE_ARCH: ${{ matrix.arch }}
     steps:
       - name: Install checkout prerequisites
         run: |
@@ -102,15 +111,16 @@ jobs:
           debuild -us -uc -b
           mkdir -p dist/deb
           shopt -s nullglob
-          debs=(../kotonoha_*.deb)
+          debs=(../kotonoha_*_"${PACKAGE_ARCH}".deb)
           test "${#debs[@]}" -eq 1
           mv "${debs[0]}" dist/deb/
       - name: Install and verify DEB
         run: |
           set -euo pipefail
           shopt -s nullglob
-          debs=(dist/deb/kotonoha_*.deb)
+          debs=(dist/deb/kotonoha_*_"${PACKAGE_ARCH}".deb)
           test "${#debs[@]}" -eq 1
+          test "$(dpkg-deb --field "${debs[0]}" Architecture)" = "$PACKAGE_ARCH"
           apt-get install -y "./${debs[0]}"
           python3 -c "import kotonoha.main"
           python3 -c "from PyQt6.QtSvg import QSvgRenderer"
@@ -125,22 +135,31 @@ jobs:
           desktop-file-validate /usr/share/applications/kotonoha.desktop
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: kotonoha-deb
-          path: dist/deb/kotonoha_*.deb
+          name: kotonoha-deb-${{ matrix.arch }}
+          path: dist/deb/kotonoha_*_${{ matrix.arch }}.deb
           if-no-files-found: error
 
   rpm:
-    name: Build RPM
+    name: Build RPM (${{ matrix.arch }})
     needs:
       - validate
       - version
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     container: fedora:43
     defaults:
       run:
         shell: bash
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      PACKAGE_ARCH: ${{ matrix.arch }}
     steps:
       - name: Install checkout prerequisites
         run: dnf install -y ca-certificates git
@@ -196,15 +215,16 @@ jobs:
             .
           rpmbuild --define "_topdir $rpm_root" -ba packaging/fedora/kotonoha.spec
           mkdir -p dist/rpm
-          mapfile -t rpms < <(find "$rpm_root/RPMS" -type f -name "kotonoha-${VERSION}-*.x86_64.rpm" -print)
+          mapfile -t rpms < <(find "$rpm_root/RPMS" -type f -name "kotonoha-${VERSION}-*.${PACKAGE_ARCH}.rpm" -print)
           test "${#rpms[@]}" -eq 1
           mv "${rpms[0]}" dist/rpm/
       - name: Install and verify RPM
         run: |
           set -euo pipefail
           shopt -s nullglob
-          rpms=(dist/rpm/kotonoha-"${VERSION}"-*.x86_64.rpm)
+          rpms=(dist/rpm/kotonoha-"${VERSION}"-*."${PACKAGE_ARCH}".rpm)
           test "${#rpms[@]}" -eq 1
+          test "$(rpm -qp --queryformat '%{ARCH}' "${rpms[0]}")" = "$PACKAGE_ARCH"
           dnf install -y "./${rpms[0]}"
           python3 -c "import qasync"
           python3 -c "from PyQt6.QtSvg import QSvgRenderer"
@@ -219,22 +239,31 @@ jobs:
           desktop-file-validate /usr/share/applications/kotonoha.desktop
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: kotonoha-rpm
-          path: dist/rpm/kotonoha-${{ needs.version.outputs.version }}-*.x86_64.rpm
+          name: kotonoha-rpm-${{ matrix.arch }}
+          path: dist/rpm/kotonoha-${{ needs.version.outputs.version }}-*.${{ matrix.arch }}.rpm
           if-no-files-found: error
 
   wheel:
-    name: Build Linux wheel
+    name: Build Linux wheel (${{ matrix.arch }})
     needs:
       - validate
       - version
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     container: ubuntu:26.04
     defaults:
       run:
         shell: bash
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      PACKAGE_ARCH: ${{ matrix.arch }}
     steps:
       - name: Install checkout prerequisites
         run: |
@@ -264,6 +293,7 @@ jobs:
       - name: Build non-pure Linux wheel
         run: |
           set -euo pipefail
+          test "$(uname -m)" = "$PACKAGE_ARCH"
           uv version "$VERSION" --frozen
           uv build --wheel
           shopt -s nullglob
@@ -290,12 +320,12 @@ jobs:
             --remove \
             --python-tag py3 \
             --abi-tag none \
-            --platform-tag linux_x86_64 \
+            --platform-tag "linux_${PACKAGE_ARCH}" \
             "${packed_wheels[0]}"
           repacked_wheels=("$repacked_dir"/*.whl)
           test "${#repacked_wheels[@]}" -eq 1
           mv "${repacked_wheels[0]}" dist/
-          linux_wheels=(dist/*-linux_x86_64.whl)
+          linux_wheels=(dist/*-linux_"${PACKAGE_ARCH}".whl)
           any_wheels=(dist/*-any.whl)
           all_wheels=(dist/*.whl)
           test "${#linux_wheels[@]}" -eq 1
@@ -305,9 +335,9 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          wheels=(dist/*-linux_x86_64.whl)
+          wheels=(dist/*-linux_"${PACKAGE_ARCH}".whl)
           test "${#wheels[@]}" -eq 1
-          python - "${wheels[0]}" <<'PY'
+          python - "${wheels[0]}" "$PACKAGE_ARCH" <<'PY'
           from email.parser import Parser
           from pathlib import Path
           import sys
@@ -328,7 +358,7 @@ jobs:
           if "Root-Is-Purelib: true" in metadata_text.splitlines():
               raise SystemExit("purelib=true remains in WHEEL metadata")
           tags = metadata.get_all("Tag", [])
-          if tags != ["py3-none-linux_x86_64"]:
+          if tags != [f"py3-none-linux_{sys.argv[2]}"]:
               raise SystemExit(f"unexpected wheel tags: {tags}")
           PY
           unpacked_dirs=(dist/unpacked/*)
@@ -349,7 +379,7 @@ jobs:
           BUILD_QT_VERSION=$(qmake6 -query QT_VERSION)
           export BUILD_QT_VERSION
           shopt -s nullglob
-          wheels=(dist/*-linux_x86_64.whl)
+          wheels=(dist/*-linux_"${PACKAGE_ARCH}".whl)
           test "${#wheels[@]}" -eq 1
           python -m venv /tmp/kotonoha-wheel
           uv pip install --python /tmp/kotonoha-wheel/bin/python "${wheels[0]}"
@@ -376,8 +406,8 @@ jobs:
           PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: kotonoha-wheel
-          path: dist/*-linux_x86_64.whl
+          name: kotonoha-wheel-${{ matrix.arch }}
+          path: dist/*-linux_${{ matrix.arch }}.whl
           if-no-files-found: error
 
   assemble:
